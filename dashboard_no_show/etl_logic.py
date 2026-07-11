@@ -12,14 +12,14 @@ def run_etl():
     try:
         # Получаем абсолютный путь к папке с DAG
         DAG_DIR = Path(__file__).parent
-        sql_path = DAG_DIR / 'sql' / 'no_show_script.sql'
+        sql_path = DAG_DIR / "sql" / "no_show_script.sql"
 
         print(f"Ищем SQL файл по пути: {sql_path}")
 
         # 1. Выгружаем из внешней БД
         connection_ext = psycopg2.connect(**config.PN02_DB_CONFIG)
 
-        with open(sql_path, 'r', encoding='utf-8') as f:
+        with open(sql_path, "r", encoding="utf-8") as f:
             sql_query = f.read()
 
         df = pd.read_sql(sql_query, connection_ext)
@@ -35,12 +35,14 @@ def run_etl():
             config.TARGET_TABLE_NAME,
             engine,
             schema=config.TARGET_SCHEMA,
-            if_exists='replace',
-            index=False
+            if_exists="replace",
+            index=False,
         )
 
         engine.dispose()
-        print(f"Успешно записано {len(df)} строк в таблицу {config.TARGET_SCHEMA}.{config.TARGET_TABLE_NAME}")
+        print(
+            f"Успешно записано {len(df)} строк в таблицу {config.TARGET_SCHEMA}.{config.TARGET_TABLE_NAME}"
+        )
 
         return True
 

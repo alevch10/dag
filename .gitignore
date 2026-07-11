@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+.github/
+.github-ci.yml
+.dockerignore
+__pycache__/
+*.py[cod]
+*$py.class
+.ruff_cache
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment
+.env
+.env.example
+Dockerfile
+README.md
+
+
+# Editor directories and files
+.vscode/
+.idea/
+.pytest_cache
+dwh.db
+DS_Store

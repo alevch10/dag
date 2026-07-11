@@ -4,13 +4,12 @@ from datetime import datetime
 
 
 @dag(
-    dag_id="test_pg_connection2",
+    dag_id="test_dwh_pg_connection",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )
 def test_pg_connection2():
-
     @task
     def test():
         hook = PostgresHook(postgres_conn_id="dwh_pg")
@@ -19,9 +18,7 @@ def test_pg_connection2():
         print(hook.get_connection("dwh_pg"))
 
         print("NOW:")
-        print(
-            hook.get_first("select now();")
-        )
+        print(hook.get_first("select now();"))
 
     test()
 
