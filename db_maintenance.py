@@ -23,7 +23,8 @@ def get_all_tables():
     )
     tables = [row[0] for row in rows]
     logging.info(f"Найдено таблиц для обслуживания: {len(tables)}")
-    return tables
+    # Возвращаем список словарей, каждый с table_name и use_concurrently
+    return [{"table_name": t, "use_concurrently": True} for t in tables]
 
 
 def maintain_table(table_name: str, use_concurrently: bool = True):
@@ -67,17 +68,17 @@ with DAG(
     schedule="0 0 1 * *",
     description="Ежемесячное обслуживание PostgreSQL: VACUUM, ANALYZE, REINDEX (кроме amplitude_*)",
     tags=["maintenance", "postgres"],
-    max_active_tasks=1,  # задачи выполняются последовательно
+    max_active_tasks=1,  # Задачи выполняются последовательно
 ) as dag:
     get_tables = PythonOperator(
         task_id="get_tables",
         python_callable=get_all_tables,
     )
 
+    # Создаём задачи для каждой таблицы, передавая op_kwargs через expand
     maintain_tasks = PythonOperator.partial(
         task_id="maintain_table",
         python_callable=maintain_table,
-        op_kwargs={"use_concurrently": True},
-    ).expand(op_kwargs={"table_name": XComArg(get_tables)})
+    ).expand(op_kwargs=XComArg(get_tables))
 
     get_tables >> maintain_tasks
