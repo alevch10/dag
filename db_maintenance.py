@@ -2,16 +2,17 @@ from airflow import DAG
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
+from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import logging
 
 # Исключаемые схемы (задаём здесь или через переменную)
-EXCLUDED_SCHEMAS = ['amplitude_mob', 'amplitude_web']
-# Можно также задать через переменную Airflow, но проще захардкодить.
+EXCLUDED_SCHEMAS = ["amplitude_mob", "amplitude_web"]
+
 
 def get_all_tables():
     """Получить список всех таблиц, исключая указанные схемы."""
-    hook = PostgresHook(postgres_conn_id='dwh_pg')
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
     sql = """
         SELECT table_schema || '.' || table_name
         FROM information_schema.tables
@@ -20,10 +21,13 @@ def get_all_tables():
           AND table_schema NOT IN %(excluded_schemas)s
         ORDER BY table_schema, table_name
     """
-    rows = hook.get_records(sql, parameters={'excluded_schemas': tuple(EXCLUDED_SCHEMAS)})
+    rows = hook.get_records(
+        sql, parameters={"excluded_schemas": tuple(EXCLUDED_SCHEMAS)}
+    )
     tables = [row[0] for row in rows]
     logging.info(f"Найдено таблиц для обслуживания: {len(tables)}")
     return tables
+
 
 def maintain_table(table_name, use_concurrently=True, **context):
     """
@@ -31,7 +35,7 @@ def maintain_table(table_name, use_concurrently=True, **context):
     :param table_name: полное имя таблицы (схема.таблица)
     :param use_concurrently: если True, использует REINDEX TABLE CONCURRENTLY
     """
-    hook = PostgresHook(postgres_conn_id='dwh_pg')
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
     logging.info(f"Начинаем обслуживание таблицы {table_name}")
 
     try:
@@ -46,7 +50,11 @@ def maintain_table(table_name, use_concurrently=True, **context):
         logging.info(f"ANALYZE {table_name} завершён")
 
         # 3. REINDEX
-        reindex_cmd = f"REINDEX TABLE CONCURRENTLY {table_name};" if use_concurrently else f"REINDEX TABLE {table_name};"
+        reindex_cmd = (
+            f"REINDEX TABLE CONCURRENTLY {table_name};"
+            if use_concurrently
+            else f"REINDEX TABLE {table_name};"
+        )
         logging.info(f"REINDEX {table_name} (CONCURRENTLY={use_concurrently})")
         hook.run(reindex_cmd)
         logging.info(f"REINDEX {table_name} завершён")
@@ -56,55 +64,62 @@ def maintain_table(table_name, use_concurrently=True, **context):
         logging.error(f"Ошибка при обслуживании таблицы {table_name}: {e}")
         raise
 
+
 def process_tables(**context):
-    """
-    Динамически создаёт задачи для каждой таблицы.
-    """
-    tables = context['ti'].xcom_pull(task_ids='get_tables')
+    tables = context["ti"].xcom_pull(task_ids="get_tables")
     if not tables:
         logging.info("Нет таблиц для обслуживания, завершаем.")
         return
 
-    from airflow.operators.python import PythonOperator
     previous = None
     for table in tables:
         task_id = f"maintain_{table.replace('.', '_')}"
         task = PythonOperator(
             task_id=task_id,
             python_callable=maintain_table,
-            op_kwargs={'table_name': table, 'use_concurrently': True},
+            op_kwargs={"table_name": table, "use_concurrently": True},
+            dag=dag,
         )
         if previous:
             previous >> task
         previous = task
 
-    # (опционально) после всех задач можно добавить задачу для уведомления
-    # но пока просто логирование
+    previous = None
+    for table in tables:
+        task_id = f"maintain_{table.replace('.', '_')}"
+        task = PythonOperator(
+            task_id=task_id,
+            python_callable=maintain_table,
+            op_kwargs={"table_name": table, "use_concurrently": True},
+        )
+        if previous:
+            previous >> task
+        previous = task
+
 
 # ---------- DAG ----------
 default_args = {
-    'owner': 'levchenko-an',
-    'retries': 2,
-    'retry_delay': timedelta(minutes=5),
-    'start_date': datetime(2026, 1, 1),
-    'catchup': False,
+    "owner": "levchenko-an",
+    "retries": 2,
+    "retry_delay": timedelta(minutes=5),
+    "start_date": datetime(2026, 1, 1),
+    "catchup": False,
 }
 
 with DAG(
-    dag_id='db_maintenance',
+    dag_id="db_maintenance",
     default_args=default_args,
-    schedule='0 0 1 * *',  # 1-го числа каждого месяца в 00:00
-    description='Ежемесячное обслуживание PostgreSQL: VACUUM, ANALYZE, REINDEX для всех таблиц, кроме amplitude_*',
-    tags=['maintenance', 'postgres'],
+    schedule="0 0 1 * *",  # 1-го числа каждого месяца в 00:00
+    description="Ежемесячное обслуживание PostgreSQL: VACUUM, ANALYZE, REINDEX для всех таблиц, кроме amplitude_*",
+    tags=["maintenance", "postgres"],
 ) as dag:
-
     get_tables = PythonOperator(
-        task_id='get_tables',
+        task_id="get_tables",
         python_callable=get_all_tables,
     )
 
     create_tasks = PythonOperator(
-        task_id='create_maintenance_tasks',
+        task_id="create_maintenance_tasks",
         python_callable=process_tables,
     )
 
