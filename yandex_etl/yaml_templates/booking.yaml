@@ -1,0 +1,392 @@
+source:
+  type: yandex_metrika
+  counter_id: 53128117
+  date_from: "{start_date}"
+  date_to: "{end_date}"
+  source: hits
+  fields:
+    - ym:pv:watchID
+    - ym:pv:pageViewID
+    - ym:pv:visitID
+    - ym:pv:clientID
+    - ym:pv:dateTime
+    - ym:pv:title
+    - ym:pv:goalsID
+    - ym:pv:URL
+    - ym:pv:referer
+    - ym:pv:UTMCampaign
+    - ym:pv:UTMContent
+    - ym:pv:UTMMedium
+    - ym:pv:UTMSource
+    - ym:pv:UTMTerm
+    - ym:pv:lastTrafficSource
+    - ym:pv:lastSearchEngineRoot
+    - ym:pv:lastSearchEngine
+    - ym:pv:lastAdvEngine
+    - ym:pv:lastSocialNetwork
+    - ym:pv:lastSocialNetworkProfile
+    - ym:pv:recommendationSystem
+    - ym:pv:messenger
+    - ym:pv:operatingSystem
+    - ym:pv:browser
+    - ym:pv:browserMajorVersion
+    - ym:pv:browserMinorVersion
+    - ym:pv:browserCountry
+    - ym:pv:browserEngine
+    - ym:pv:browserEngineVersion1
+    - ym:pv:browserEngineVersion2
+    - ym:pv:browserEngineVersion3
+    - ym:pv:browserEngineVersion4
+    - ym:pv:browserLanguage
+    - ym:pv:cookieEnabled
+    - ym:pv:deviceCategory
+    - ym:pv:javascriptEnabled
+    - ym:pv:mobilePhone
+    - ym:pv:mobilePhoneModel
+    - ym:pv:operatingSystemRoot
+    - ym:pv:physicalScreenHeight
+    - ym:pv:physicalScreenWidth
+    - ym:pv:screenColors
+    - ym:pv:screenFormat
+    - ym:pv:screenHeight
+    - ym:pv:screenOrientation
+    - ym:pv:screenOrientationName
+    - ym:pv:screenWidth
+    - ym:pv:windowClientHeight
+    - ym:pv:windowClientWidth
+    - ym:pv:ipAddress
+    - ym:pv:regionCity
+    - ym:pv:regionCountry
+    - ym:pv:isPageView
+    - ym:pv:link
+    - ym:pv:download
+    - ym:pv:notBounce
+    - ym:pv:artificial
+    - ym:pv:httpError
+    - ym:pv:shareService
+    - ym:pv:shareURL
+    - ym:pv:shareTitle
+    - ym:pv:params
+    - ym:pv:offlineCallTalkDuration
+    - ym:pv:offlineCallHoldDuration
+    - ym:pv:offlineCallMissed
+    - ym:pv:offlineCallTag
+    - ym:pv:offlineCallFirstTimeCaller
+    - ym:pv:offlineCallURL
+  chunk_days: 1
+
+tables:
+  - name: yandex_metrika_booking.events
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: title
+        sources: ["title"]
+        type: string
+      - target: goals_id
+        sources: ["goalsID"]
+        type: json
+      - target: url
+        sources: ["URL"]
+        type: string
+      - target: referer
+        sources: ["referer"]
+        type: string
+      - target: is_page_view
+        sources: ["isPageView"]
+        type: boolean
+      - target: link
+        sources: ["link"]
+        type: boolean
+      - target: download
+        sources: ["download"]
+        type: boolean
+      - target: not_bounce
+        sources: ["notBounce"]
+        type: boolean
+      - target: artificial
+        sources: ["artificial"]
+        type: boolean
+      - target: http_error
+        sources: ["httpError"]
+        type: integer
+      - target: share_service
+        sources: ["shareService"]
+        type: string
+      - target: share_url
+        sources: ["shareURL"]
+        type: string
+      - target: share_title
+        sources: ["shareTitle"]
+        type: string
+
+  - name: yandex_metrika_booking.event_params
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: params
+        sources: ["params"]
+        type: json
+
+  - name: yandex_metrika_booking.marketing_info
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: utm_campaign
+        sources: ["UTMCampaign"]
+        type: string
+      - target: utm_content
+        sources: ["UTMContent"]
+        type: string
+      - target: utm_medium
+        sources: ["UTMMedium"]
+        type: string
+      - target: utm_source
+        sources: ["UTMSource"]
+        type: string
+      - target: utm_term
+        sources: ["UTMTerm"]
+        type: string
+      - target: last_traffic_source
+        sources: ["lastTrafficSource"]
+        type: string
+      - target: last_search_engine_root
+        sources: ["lastSearchEngineRoot"]
+        type: string
+      - target: last_search_engine
+        sources: ["lastSearchEngine"]
+        type: string
+      - target: last_adv_engine
+        sources: ["lastAdvEngine"]
+        type: string
+      - target: last_social_network
+        sources: ["lastSocialNetwork"]
+        type: string
+      - target: last_social_network_profile
+        sources: ["lastSocialNetworkProfile"]
+        type: string
+      - target: recommendation_system
+        sources: ["recommendationSystem"]
+        type: string
+      - target: messenger
+        sources: ["messenger"]
+        type: string
+
+  - name: yandex_metrika_booking.devices
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: operating_system
+        sources: ["operatingSystem"]
+        type: string
+      - target: browser
+        sources: ["browser"]
+        type: string
+      - target: browser_major_version
+        sources: ["browserMajorVersion"]
+        type: integer
+      - target: browser_minor_version
+        sources: ["browserMinorVersion"]
+        type: integer
+      - target: browser_country
+        sources: ["browserCountry"]
+        type: string
+      - target: browser_engine
+        sources: ["browserEngine"]
+        type: string
+      - target: browser_engine_version1
+        sources: ["browserEngineVersion1"]
+        type: integer
+      - target: browser_engine_version2
+        sources: ["browserEngineVersion2"]
+        type: integer
+      - target: browser_engine_version3
+        sources: ["browserEngineVersion3"]
+        type: integer
+      - target: browser_engine_version4
+        sources: ["browserEngineVersion4"]
+        type: integer
+      - target: browser_language
+        sources: ["browserLanguage"]
+        type: string
+      - target: cookie_enabled
+        sources: ["cookieEnabled"]
+        type: boolean
+      - target: device_category
+        sources: ["deviceCategory"]
+        type: string
+      - target: javascript_enabled
+        sources: ["javascriptEnabled"]
+        type: boolean
+      - target: mobile_phone
+        sources: ["mobilePhone"]
+        type: string
+      - target: mobile_phone_model
+        sources: ["mobilePhoneModel"]
+        type: string
+      - target: operating_system_root
+        sources: ["operatingSystemRoot"]
+        type: string
+      - target: physical_screen_height
+        sources: ["physicalScreenHeight"]
+        type: integer
+      - target: physical_screen_width
+        sources: ["physicalScreenWidth"]
+        type: integer
+      - target: screen_colors
+        sources: ["screenColors"]
+        type: integer
+      - target: screen_format
+        sources: ["screenFormat"]
+        type: string
+      - target: screen_height
+        sources: ["screenHeight"]
+        type: integer
+      - target: screen_orientation
+        sources: ["screenOrientation"]
+        type: integer
+      - target: screen_orientation_name
+        sources: ["screenOrientationName"]
+        type: string
+      - target: screen_width
+        sources: ["screenWidth"]
+        type: integer
+      - target: window_client_height
+        sources: ["windowClientHeight"]
+        type: integer
+      - target: window_client_width
+        sources: ["windowClientWidth"]
+        type: integer
+
+  - name: yandex_metrika_booking.location
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: ip_address
+        sources: ["ipAddress"]
+        type: string
+      - target: region_city
+        sources: ["regionCity"]
+        type: string
+      - target: region_country
+        sources: ["regionCountry"]
+        type: string
+
+  - name: yandex_metrika_booking.offline_calls
+    primary_key: [watch_id, date_time]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: watch_id
+        sources: ["watchID"]
+        type: integer
+      - target: page_view_id
+        sources: ["pageViewID"]
+        type: integer
+      - target: visit_id
+        sources: ["visitID"]
+        type: integer
+      - target: client_id
+        sources: ["clientID"]
+        type: integer
+      - target: date_time
+        sources: ["dateTime"]
+        type: datetime
+      - target: offline_call_talk_duration
+        sources: ["offlineCallTalkDuration"]
+        type: integer
+      - target: offline_call_hold_duration
+        sources: ["offlineCallHoldDuration"]
+        type: integer
+      - target: offline_call_missed
+        sources: ["offlineCallMissed"]
+        type: integer
+      - target: offline_call_tag
+        sources: ["offlineCallTag"]
+        type: string
+      - target: offline_call_first_time_caller
+        sources: ["offlineCallFirstTimeCaller"]
+        type: integer
+      - target: offline_call_url
+        sources: ["offlineCallURL"]
+        type: string

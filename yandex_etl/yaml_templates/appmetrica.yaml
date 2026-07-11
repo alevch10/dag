@@ -1,0 +1,191 @@
+source:
+  type: appmetrica
+  application_id: 4777504
+  date_since: "{start_date}"
+  date_until: "{end_date}"
+  export_format: csv
+  fields:
+    - profile_id
+    - application_id
+    - app_build_number
+    - ios_ifa
+    - ios_ifv
+    - android_id
+    - google_aid
+    - os_name
+    - os_version
+    - device_manufacturer
+    - device_model
+    - original_device_model
+    - device_type
+    - device_locale
+    - device_ipv6
+    - app_version_name
+    - event_name
+    - event_json
+    - event_datetime
+    - event_receive_datetime
+    - connection_type
+    - operator_name
+    - mcc
+    - mnc
+    - country_iso_code
+    - city
+    - appmetrica_device_id
+    - installation_id
+    - session_id
+    - windows_aid
+  chunk_days: 7
+  generate_uuid: true
+
+tables:
+  - name: appmetrica.events
+    primary_key: [uuid]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: uuid
+        sources: [ "__uuid__" ]
+        type: uuid
+      - target: profile_id
+        sources: ["profile_id"]
+        type: integer
+      - target: application_id
+        sources: ["application_id"]
+        type: integer
+      - target: event_datetime
+        sources: ["event_datetime"]
+        type: datetime
+      - target: event_receive_datetime
+        sources: ["event_receive_datetime"]
+        type: datetime
+      - target: event_name
+        sources: ["event_name"]
+        type: string
+      - target: session_id
+        sources: ["session_id"]
+        type: integer
+      - target: appmetrica_device_id
+        sources: ["appmetrica_device_id"]
+        type: integer
+      - target: installation_id
+        sources: ["installation_id"]
+        type: uuid
+      - target: app_version_name
+        sources: ["app_version_name"]
+        type: string
+      - target: app_build_number
+        sources: ["app_build_number"]
+        type: integer
+      - target: windows_aid
+        sources: ["windows_aid"]
+        type: string
+
+  - name: appmetrica.event_params
+    primary_key: [uuid]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: uuid
+        sources: [ "__uuid__" ]
+        type: uuid
+      - target: profile_id
+        sources: ["profile_id"]
+        type: integer
+      - target: event_datetime
+        sources: ["event_datetime"]
+        type: datetime
+      - target: event_name
+        sources: ["event_name"]
+        type: string
+      - target: session_id
+        sources: ["session_id"]
+        type: integer
+      - target: event_json
+        sources: ["event_json"]
+        type: json
+
+  - name: appmetrica.devices
+    primary_key: [uuid]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: uuid
+        sources: [ "__uuid__" ]
+        type: uuid
+      - target: profile_id
+        sources: ["profile_id"]
+        type: integer
+      - target: event_datetime
+        sources: ["event_datetime"]
+        type: datetime
+      - target: device_manufacturer
+        sources: ["device_manufacturer"]
+        type: string
+      - target: device_model
+        sources: ["device_model"]
+        type: string
+      - target: original_device_model
+        sources: ["original_device_model"]
+        type: string
+      - target: device_type
+        sources: ["device_type"]
+        type: string
+      - target: device_locale
+        sources: ["device_locale"]
+        type: string
+      - target: device_ipv6
+        sources: ["device_ipv6"]
+        type: inet
+      - target: os_name
+        sources: ["os_name"]
+        type: string
+      - target: os_version
+        sources: ["os_version"]
+        type: string
+      - target: connection_type
+        sources: ["connection_type"]
+        type: string
+      - target: operator_name
+        sources: ["operator_name"]
+        type: string
+      - target: mcc
+        sources: ["mcc"]
+        type: integer
+      - target: mnc
+        sources: ["mnc"]
+        type: integer
+      - target: ios_ifa
+        sources: ["ios_ifa"]
+        type: uuid
+      - target: ios_ifv
+        sources: ["ios_ifv"]
+        type: uuid
+      - target: android_id
+        sources: ["android_id"]
+        type: string
+      - target: google_aid
+        sources: ["google_aid"]
+        type: uuid
+        null_values: ["0000-0000", ""]
+
+  - name: appmetrica.location
+    primary_key: [uuid]
+    on_conflict: DO NOTHING
+    batch_size: 5000
+    fields:
+      - target: uuid
+        sources: [ "__uuid__" ]
+        type: uuid
+      - target: profile_id
+        sources: ["profile_id"]
+        type: integer
+      - target: event_datetime
+        sources: ["event_datetime"]
+        type: datetime
+      - target: country_iso_code
+        sources: ["country_iso_code"]
+        type: string
+      - target: city
+        sources: ["city"]
+        type: string
