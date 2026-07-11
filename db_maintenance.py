@@ -23,7 +23,7 @@ def get_all_tables():
     )
     tables = [row[0] for row in rows]
     logging.info(f"Найдено таблиц для обслуживания: {len(tables)}")
-    # Возвращаем список словарей, каждый с table_name и use_concurrently
+    # Возвращаем список словарей для динамического создания задач
     return [{"table_name": t, "use_concurrently": True} for t in tables]
 
 
@@ -31,21 +31,24 @@ def maintain_table(table_name: str, use_concurrently: bool = True):
     hook = PostgresHook(postgres_conn_id="dwh_pg")
     logging.info(f"Начинаем обслуживание таблицы {table_name}")
     try:
+        # VACUUM – обязательно autocommit=True
         logging.info(f"VACUUM {table_name}")
-        hook.run(f"VACUUM {table_name};")
+        hook.run(f"VACUUM {table_name};", autocommit=True)
         logging.info(f"VACUUM {table_name} завершён")
 
+        # ANALYZE – тоже можно с autocommit
         logging.info(f"ANALYZE {table_name}")
-        hook.run(f"ANALYZE {table_name};")
+        hook.run(f"ANALYZE {table_name};", autocommit=True)
         logging.info(f"ANALYZE {table_name} завершён")
 
+        # REINDEX – также требуется autocommit
         reindex_cmd = (
             f"REINDEX TABLE CONCURRENTLY {table_name};"
             if use_concurrently
             else f"REINDEX TABLE {table_name};"
         )
         logging.info(f"REINDEX {table_name} (CONCURRENTLY={use_concurrently})")
-        hook.run(reindex_cmd)
+        hook.run(reindex_cmd, autocommit=True)
         logging.info(f"REINDEX {table_name} завершён")
 
         logging.info(f"Обслуживание таблицы {table_name} успешно завершено")
@@ -68,14 +71,13 @@ with DAG(
     schedule="0 0 1 * *",
     description="Ежемесячное обслуживание PostgreSQL: VACUUM, ANALYZE, REINDEX (кроме amplitude_*)",
     tags=["maintenance", "postgres"],
-    max_active_tasks=1,  # Задачи выполняются последовательно
+    max_active_tasks=1,  # задачи выполняются последовательно
 ) as dag:
     get_tables = PythonOperator(
         task_id="get_tables",
         python_callable=get_all_tables,
     )
 
-    # Создаём задачи для каждой таблицы, передавая op_kwargs через expand
     maintain_tasks = PythonOperator.partial(
         task_id="maintain_table",
         python_callable=maintain_table,
