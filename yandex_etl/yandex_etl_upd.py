@@ -4,121 +4,117 @@ from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
 from airflow.utils import timezone
+
 from datetime import datetime, timedelta
+
 import requests
 import logging
 import os
 
-# ---------- Путь к папке с YAML-шаблонами ----------
-YAML_DIR = os.path.join(os.path.dirname(__file__), "yaml_templates")
 
-
-# ---------- Функция загрузки YAML из файла ----------
-def load_yaml_template(filename):
-    with open(os.path.join(YAML_DIR, filename), "r") as f:
+def load_file(path):
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 
-# ---------- Переменные из Airflow ----------
-DWH_HELPER_URL = Variable.get("dwh_helper_url", default_var="http://dwh-helper:8000")
-BEARER_TOKEN = Variable.get("BEARER", default_var="")
-HEADERS = {
-    "Authorization": f"Bearer {BEARER_TOKEN}",
-    "Content-Type": "application/x-yaml",
-}
-
-# ---------- Загружаем шаблоны ----------
-APPMETRICA_YAML = load_yaml_template("appmetrica.yaml")
-BOOKING_YAML = load_yaml_template("booking.yaml")
-WEBLK_YAML = load_yaml_template("web_lk.yaml")
+def load_yaml(filename):
+    return load_file(
+        os.path.join(os.path.dirname(__file__), "yaml_templates", filename)
+    )
 
 
-# ---------- Вспомогательная функция ----------
-def get_yaml_with_dates(template, start_date, end_date):
-    return template.format(start_date=start_date, end_date=end_date)
+def load_sql(filename):
+    return load_file(os.path.join(os.path.dirname(__file__), "sql", filename))
 
 
-# ---------- Основная функция загрузки ----------
-def load_data(
-    table_name: str, date_field: str, yaml_template: str, source_name: str, **context
-):
+def load_source(table_name, date_field, yaml_template, source_name, **context):
     hook = PostgresHook(postgres_conn_id="dwh_pg")
-    sql = f"SELECT max({date_field}) FROM {table_name}"
-    logging.info(f"Выполняем SQL-запрос: {sql}")
+
+    sql = f"""
+        SELECT max({date_field})
+        FROM {table_name}
+    """
     result = hook.get_first(sql)
-    logging.info(f"Результат запроса: {result}")
-    max_date = result[0] if result and result[0] else None
+    max_date = result[0] if result else None
 
     today = timezone.utcnow().date()
     yesterday = today - timedelta(days=1)
 
-    if max_date is None:
-        start_date = yesterday - timedelta(days=7)
-        end_date = yesterday
-        logging.warning(
-            f"Таблица {table_name} пуста, загружаем за последние 7 дней ({start_date} - {end_date})"
-        )
-    else:
+    if max_date:
         if isinstance(max_date, datetime):
             max_date = max_date.date()
-        if max_date < yesterday:
-            start_date = max_date + timedelta(days=1)
-            end_date = yesterday
-        else:
-            logging.info(
-                f"Данные за вчера ({yesterday}) уже есть в {table_name}, пропускаем."
-            )
-            # ✅ Правильно завершаем задачу как пропущенную, а не перепланируем
-            raise AirflowSkipException(
-                f"Данные за {yesterday} уже загружены, пропускаем."
-            )
+        if max_date >= yesterday:
+            raise AirflowSkipException(f"{source_name}: данные за {yesterday} уже есть")
+        start_date = max_date + timedelta(days=1)
+    else:
+        start_date = yesterday - timedelta(days=7)
 
-    yaml_payload = get_yaml_with_dates(
-        yaml_template, start_date.isoformat(), end_date.isoformat()
+    end_date = yesterday
+
+    payload = yaml_template.format(
+        start_date=start_date.isoformat(), end_date=end_date.isoformat()
     )
 
-    url = f"{DWH_HELPER_URL}/etl/transformer?start_after_line=0"
-    try:
-        response = requests.post(url, data=yaml_payload, headers=HEADERS, timeout=72000, verify=False)
-        response.raise_for_status()
-        resp_json = response.json()
+    logging.info(
+        f"""
+        =========================
+        ETL START
+        Source: {source_name}
+        Period: {start_date} - {end_date}
+        =========================
+        """
+    )
 
-        # Логируем все поля ответа
-        logging.info(f"=== Ответ от API для {source_name} ===")
-        logging.info(f"Status: {resp_json.get('status')}")
-        logging.info(f"Message: {resp_json.get('message')}")
-        if "statistics" in resp_json and resp_json["statistics"]:
-            logging.info(f"Statistics: {resp_json['statistics']}")
-        if "failed_file" in resp_json and resp_json["failed_file"]:
-            logging.warning(
-                f"Failed file: {resp_json['failed_file']}, line: {resp_json.get('failed_line')}"
-            )
-        if "last_successful_file" in resp_json and resp_json["last_successful_file"]:
-            logging.info(
-                f"Last successful file: {resp_json['last_successful_file']}, line: {resp_json.get('last_successful_line')}"
-            )
-        if "error_details" in resp_json and resp_json["error_details"]:
-            logging.error(f"Error details: {resp_json['error_details']}")
+    response = requests.post(
+        f"{Variable.get('dwh_helper_url')}/etl/transformer?start_after_line=0",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {Variable.get('BEARER')}",
+            "Content-Type": "application/x-yaml",
+        },
+        timeout=72000,
+        verify=False,
+    )
+    response.raise_for_status()
+    result = response.json()
 
-        # Сохраняем ответ в XCom для дальнейшего использования
-        ti = context["ti"]
-        ti.xcom_push(key=f"{source_name}_response", value=resp_json)
+    logging.info(f"{source_name} result: {result}")
 
-        if resp_json.get("status") == "success":
-            logging.info(
-                f"Данные для {source_name} успешно загружены за период {start_date} - {end_date}"
-            )
-        else:
-            raise ValueError(
-                f"Не успешный статус: {resp_json.get('message', 'Unknown error')}"
-            )
+    if result.get("status") != "success":
+        raise Exception(result)
 
-    except Exception as e:
-        logging.error(f"Ошибка при загрузке {source_name}: {e}")
-        raise
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    }
 
 
-# ---------- DAG ----------
+def execute_sql(sql, source_task, **context):
+    ti = context["ti"]
+    dates = ti.xcom_pull(task_ids=source_task)
+
+    if not dates:
+        raise Exception(f"No dates from {source_task}")
+
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+
+    logging.info(
+        f"""
+        SQL execution
+        source task: {source_task}
+        period: {dates}
+        """
+    )
+
+    hook.run(
+        sql,
+        parameters={
+            "start_date": dates["start_date"],
+            "end_date": dates["end_date"],
+        },
+    )
+
+
 default_args = {
     "owner": "levchenko-an",
     "retries": 0,
@@ -126,45 +122,120 @@ default_args = {
 }
 
 with DAG(
-    dag_id="etl_yandex_appmetrica",
+    dag_id="kpi_user_activity",
     start_date=datetime(2026, 7, 12),
-    description="Ежедневная загрузка данных из AppMetrica и Яндекс.Метрики в DWH",
     schedule="0 3 * * *",
-    tags=["etl", "appmetrica", "yandex_metrika"],
     catchup=False,
     default_args=default_args,
+    tags=["kpi", "user_activity"],
 ) as dag:
-    task_appmetrica = PythonOperator(
+    # -------------------------
+    # AppMetrica
+    # -------------------------
+    load_appmetrica = PythonOperator(
         task_id="load_appmetrica",
-        python_callable=load_data,
+        python_callable=load_source,
         op_kwargs={
             "table_name": "appmetrica.events",
             "date_field": "event_datetime",
-            "yaml_template": APPMETRICA_YAML,
+            "yaml_template": load_yaml("appmetrica.yaml"),
             "source_name": "AppMetrica",
         },
     )
 
-    task_booking = PythonOperator(
-        task_id="load_yandex_booking",
-        python_callable=load_data,
+    identity_appmetrica = PythonOperator(
+        task_id="build_identity_appmetrica",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("update_identity_appmetrica.sql"),
+            "source_task": "load_appmetrica",
+        },
+    )
+
+    activity_appmetrica = PythonOperator(
+        task_id="build_activity_appmetrica",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("load_activity_appmetrica.sql"),
+            "source_task": "load_appmetrica",
+        },
+    )
+
+    # -------------------------
+    # Booking
+    # -------------------------
+    load_booking = PythonOperator(
+        task_id="load_booking",
+        python_callable=load_source,
         op_kwargs={
             "table_name": "yandex_metrika_booking.events",
             "date_field": "date_time",
-            "yaml_template": BOOKING_YAML,
-            "source_name": "Yandex Metrika Booking",
+            "yaml_template": load_yaml("booking.yaml"),
+            "source_name": "Booking",
         },
     )
 
-    task_web_lk = PythonOperator(
-        task_id="load_yandex_web_lk",
-        python_callable=load_data,
+    identity_booking = PythonOperator(
+        task_id="build_identity_booking",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("update_identity_booking.sql"),
+            "source_task": "load_booking",
+        },
+    )
+
+    activity_booking = PythonOperator(
+        task_id="build_activity_booking",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("load_activity_booking.sql"),
+            "source_task": "load_booking",
+        },
+    )
+
+    # -------------------------
+    # Web LK
+    # -------------------------
+    load_web_lk = PythonOperator(
+        task_id="load_web_lk",
+        python_callable=load_source,
         op_kwargs={
             "table_name": "yandex_metrika_web_lk.events",
             "date_field": "date_time",
-            "yaml_template": WEBLK_YAML,
-            "source_name": "Yandex Metrika Web LK",
+            "yaml_template": load_yaml("web_lk.yaml"),
+            "source_name": "Web LK",
         },
     )
 
-    task_appmetrica >> task_booking >> task_web_lk
+    identity_web_lk = PythonOperator(
+        task_id="build_identity_web_lk",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("update_identity_web_lk.sql"),
+            "source_task": "load_web_lk",
+        },
+    )
+
+    activity_web_lk = PythonOperator(
+        task_id="build_activity_web_lk",
+        python_callable=execute_sql,
+        op_kwargs={
+            "sql": load_sql("load_activity_web_lk.sql"),
+            "source_task": "load_web_lk",
+        },
+    )
+
+    # -------------------------
+    # Общая последовательность
+    # -------------------------
+    (
+        load_appmetrica
+        >> identity_appmetrica
+        >> activity_appmetrica
+        >> load_booking
+        >> identity_booking
+        >> activity_booking
+        >> load_web_lk
+        >> identity_web_lk
+        >> activity_web_lk
+    )
