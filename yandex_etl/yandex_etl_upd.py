@@ -3,6 +3,7 @@ from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
+from airflow.utils import timezone
 from datetime import datetime, timedelta
 import requests
 import logging
@@ -48,7 +49,7 @@ def load_data(
     logging.info(f"Результат запроса: {result}")
     max_date = result[0] if result and result[0] else None
 
-    today = datetime.now().date()
+    today = timezone.utcnow().date()
     yesterday = today - timedelta(days=1)
 
     if max_date is None:
@@ -78,7 +79,7 @@ def load_data(
 
     url = f"{DWH_HELPER_URL}/etl/transformer?start_after_line=0"
     try:
-        response = requests.post(url, data=yaml_payload, headers=HEADERS, timeout=72000)
+        response = requests.post(url, data=yaml_payload, headers=HEADERS, timeout=72000, verify=False)
         response.raise_for_status()
         resp_json = response.json()
 
@@ -122,16 +123,16 @@ default_args = {
     "owner": "levchenko-an",
     "retries": 0,
     "retry_delay": timedelta(minutes=5),
-    "start_date": datetime(2026, 11, 10),
-    "catchup": False,
 }
 
 with DAG(
     dag_id="etl_yandex_appmetrica",
-    default_args=default_args,
-    schedule="0 3 * * *",
+    start_date=datetime(2026, 7, 12),
     description="Ежедневная загрузка данных из AppMetrica и Яндекс.Метрики в DWH",
+    schedule="0 3 * * *",
     tags=["etl", "appmetrica", "yandex_metrika"],
+    catchup=False,
+    default_args=default_args,
 ) as dag:
     task_appmetrica = PythonOperator(
         task_id="load_appmetrica",
