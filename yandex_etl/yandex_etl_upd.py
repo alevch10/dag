@@ -43,7 +43,9 @@ def load_data(
 ):
     hook = PostgresHook(postgres_conn_id="dwh_pg")
     sql = f"SELECT max({date_field}) FROM {table_name}"
+    logging.info(f"Выполняем SQL-запрос: {sql}")
     result = hook.get_first(sql)
+    logging.info(f"Результат запроса: {result}")
     max_date = result[0] if result and result[0] else None
 
     today = datetime.now().date()
