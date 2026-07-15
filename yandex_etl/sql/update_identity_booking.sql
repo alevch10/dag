@@ -9,7 +9,7 @@ INSERT INTO
 SELECT
   'booking',
   e.client_id::TEXT,
-  MAX(kpi.safe_extract_user_id (p.params)),
+  MAX(kpi.safe_extract_user_id (p.params::TEXT)),
   MIN(e.date_time),
   MAX(e.date_time)
 FROM
