@@ -16,8 +16,8 @@ FROM
   yandex_metrika_web_lk.events e
   LEFT JOIN yandex_metrika_web_lk.event_params p ON p.watch_id = e.watch_id
 WHERE
-  e.date_time >= % (start_date) s::date
-  AND e.date_time < (% (end_date) s::date + INTERVAL '1 day')
+  e.date_time >= '{start_date}'::date
+  AND e.date_time < ('{end_date}'::date + INTERVAL '1 day')
 GROUP BY
   e.client_id::TEXT
 ON CONFLICT (source, external_user_id) DO

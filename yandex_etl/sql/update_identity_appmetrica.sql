@@ -15,8 +15,8 @@ SELECT
 FROM
   appmetrica.events
 WHERE
-  event_datetime >= % (start_date) s::date
-  AND event_datetime < (% (end_date) s::date + INTERVAL '1 day')
+  event_datetime >= '{start_date}'::date
+  AND event_datetime < ('{end_date}'::date + INTERVAL '1 day')
   AND appmetrica_device_id IS NOT NULL
 GROUP BY
   appmetrica_device_id::TEXT

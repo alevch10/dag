@@ -30,6 +30,6 @@ FROM
   LEFT JOIN kpi.user_identity ui ON ui.source = 'appmetrica'
   AND ui.external_user_id::TEXT = e.appmetrica_device_id::TEXT
 WHERE
-  e.event_datetime >= % (start_date) s::date
-  AND e.event_datetime < (% (end_date) s::date + INTERVAL '1 day')
+  e.event_datetime >= '{start_date}'::date
+  AND e.event_datetime < ('{end_date}'::date + INTERVAL '1 day')
 ON CONFLICT DO NOTHING;

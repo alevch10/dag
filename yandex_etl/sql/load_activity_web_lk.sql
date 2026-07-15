@@ -29,7 +29,7 @@ FROM
   LEFT JOIN kpi.user_identity ui ON ui.source = 'web_lk'
   AND ui.external_user_id::TEXT = e.client_id::TEXT
 WHERE
-  e.date_time >= % (start_date) s::date
-  AND e.date_time < (% (end_date) s::date + INTERVAL '1 day')
+  e.date_time >= '{start_date}'::date
+  AND e.date_time < ('{end_date}'::date + INTERVAL '1 day')
   AND e.is_page_view = TRUE
 ON CONFLICT DO NOTHING;

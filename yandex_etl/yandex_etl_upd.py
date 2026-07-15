@@ -1,9 +1,8 @@
 from airflow import DAG
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.operators.python import PythonOperator
-from airflow.models import Variable
+from airflow.sdk import Variable, timezone
 from airflow.exceptions import AirflowSkipException
-from airflow.utils import timezone
 
 from datetime import datetime, timedelta
 
@@ -96,6 +95,11 @@ def execute_sql(sql, source_task, **context):
     if not dates:
         raise Exception(f"No dates from {source_task}")
 
+    sql = sql.format(
+        start_date=dates["start_date"],
+        end_date=dates["end_date"],
+    )
+
     hook = PostgresHook(postgres_conn_id="dwh_pg")
 
     logging.info(
@@ -122,12 +126,12 @@ default_args = {
 }
 
 with DAG(
-    dag_id="kpi_user_activity",
-    start_date=datetime(2026, 7, 12),
+    dag_id="yandex_metrika_data_and_mau_kpis",
+    start_date=datetime(2026, 7, 15),
     schedule="0 3 * * *",
     catchup=False,
     default_args=default_args,
-    tags=["kpi", "user_activity"],
+    tags=["kpi", "yandex_metrika", "appmetrica", "mau_ob", "mau_lk"],
 ) as dag:
     # -------------------------
     # AppMetrica
