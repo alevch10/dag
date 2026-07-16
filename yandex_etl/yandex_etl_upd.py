@@ -114,8 +114,8 @@ AND ui.external_user_id::TEXT = {external_id}
 {joins}
 WHERE
     {where_clause}
-    AND e.{date_field} >= %(start_date)s::date
-    AND e.{date_field} < (%(end_date)s::date + interval '1 day')
+    AND e.{date_field} >= '{start_date}'::date
+    AND e.{date_field} < ('{end_date}'::date + interval '1 day')
 GROUP BY
     DATE(e.{date_field}),
     {external_id}
@@ -140,29 +140,22 @@ SET
 def execute_sql(sql, source_task, **context):
     ti = context["ti"]
     dates = ti.xcom_pull(task_ids=source_task)
-
     if not dates:
         raise Exception(f"No dates from {source_task}")
 
-    sql = sql
+    # Форматируем SQL с подстановкой дат
+    formatted_sql = sql.format(**dates)
 
     hook = PostgresHook(postgres_conn_id="dwh_pg")
-
     logging.info(
         f"""
         SQL execution
         source task: {source_task}
         period: {dates}
+        SQL: {formatted_sql}
         """
     )
-
-    hook.run(
-        sql,
-        parameters={
-            "start_date": dates["start_date"],
-            "end_date": dates["end_date"],
-        },
-    )
+    hook.run(formatted_sql)
 
 
 default_args = {
@@ -173,42 +166,29 @@ default_args = {
 
 
 def execute_presence(sql, source_task, **context):
-    """
-    Строит kpi.user_presence за период,
-    который был загружен source_task.
-    """
     ti = context["ti"]
     dates = ti.xcom_pull(task_ids=source_task)
     if not dates:
         raise Exception(f"No dates from {source_task}")
+
+    formatted_sql = sql.format(**dates)
+
     hook = PostgresHook(postgres_conn_id="dwh_pg")
     logging.info(
         f"""
         =========================
         BUILD USER PRESENCE
-        source task:
-        {source_task}
-        period:
-        {dates}
+        source task: {source_task}
+        period: {dates}
+        SQL: {formatted_sql}
         =========================
-        SQL:
-        {sql}
         """
     )
-    hook.run(
-        sql,
-        parameters={
-            "start_date": dates["start_date"],
-            "end_date": dates["end_date"],
-        },
-    )
+    hook.run(formatted_sql)
     logging.info(
         f"""
         USER PRESENCE COMPLETED
-        period:
-        {dates["start_date"]}
-        -
-        {dates["end_date"]}
+        period: {dates["start_date"]} - {dates["end_date"]}
         """
     )
 
