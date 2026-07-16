@@ -165,13 +165,14 @@ default_args = {
 }
 
 
-def execute_presence(sql, source_task, **context):
+def execute_presence(sql_template, sql_params, source_task, **context):
     ti = context["ti"]
     dates = ti.xcom_pull(task_ids=source_task)
     if not dates:
         raise Exception(f"No dates from {source_task}")
 
-    formatted_sql = sql.format(**dates)
+    format_params = {**sql_params, **dates}
+    formatted_sql = sql_template.format(**format_params)
 
     hook = PostgresHook(postgres_conn_id="dwh_pg")
     logging.info(
@@ -288,65 +289,73 @@ with DAG(
         {
             "task_id": "presence_appmetrica_oz",
             "source_task": "load_appmetrica",
-            "table_name": "appmetrica.events",
-            "date_field": "event_datetime",
-            "source": "appmetrica",
-            "identity_source": "appmetrica",
-            "product": "oz",
-            "platform": "mobile",
-            "external_id": "e.appmetrica_device_id::text",
-            "joins": """
-                JOIN kpi.oz_events_mobile o
-                ON o.event_type=e.event_name
-            """,
-            "where_clause": "TRUE",
+            "sql_params": {
+                "table_name": "appmetrica.events",
+                "date_field": "event_datetime",
+                "source": "appmetrica",
+                "identity_source": "appmetrica",
+                "product": "oz",
+                "platform": "mobile",
+                "external_id": "e.appmetrica_device_id::text",
+                "joins": """
+                    JOIN kpi.oz_events_mobile o
+                    ON o.event_type=e.event_name
+                """,
+                "where_clause": "TRUE",
+            },
         },
         # ---------- AppMetrica LK ----------
         {
             "task_id": "presence_appmetrica_lk",
             "source_task": "load_appmetrica",
-            "table_name": "appmetrica.events",
-            "date_field": "event_datetime",
-            "source": "appmetrica",
-            "identity_source": "appmetrica",
-            "product": "lk",
-            "platform": "mobile",
-            "external_id": "e.appmetrica_device_id::text",
-            "joins": "",
-            "where_clause": "TRUE",
+            "sql_params": {
+                "table_name": "appmetrica.events",
+                "date_field": "event_datetime",
+                "source": "appmetrica",
+                "identity_source": "appmetrica",
+                "product": "lk",
+                "platform": "mobile",
+                "external_id": "e.appmetrica_device_id::text",
+                "joins": "",
+                "where_clause": "TRUE",
+            },
         },
         # ---------- Booking ----------
         {
             "task_id": "presence_booking",
             "source_task": "load_booking",
-            "table_name": "yandex_metrika_booking.events",
-            "date_field": "date_time",
-            "source": "booking",
-            "identity_source": "booking",
-            "product": "oz",
-            "platform": "web",
-            "external_id": "e.client_id::text",
-            "joins": "",
-            "where_clause": """
-                e.is_page_view=false
-                AND e.url LIKE 'goal://booking.avaclinic.ru/%'
-            """,
+            "sql_params": {
+                "table_name": "yandex_metrika_booking.events",
+                "date_field": "date_time",
+                "source": "booking",
+                "identity_source": "booking",
+                "product": "oz",
+                "platform": "web",
+                "external_id": "e.client_id::text",
+                "joins": "",
+                "where_clause": """
+                    e.is_page_view=false
+                    AND e.url LIKE 'goal://booking.avaclinic.ru/%'
+                """,
+            },
         },
         # ---------- Web LK ----------
         {
             "task_id": "presence_web_lk",
             "source_task": "load_web_lk",
-            "table_name": "yandex_metrika_web_lk.events",
-            "date_field": "date_time",
-            "source": "web_lk",
-            "identity_source": "web_lk",
-            "product": "lk",
-            "platform": "web",
-            "external_id": "e.client_id::text",
-            "joins": "",
-            "where_clause": """
-                e.is_page_view=true
-            """,
+            "sql_params": {
+                "table_name": "yandex_metrika_web_lk.events",
+                "date_field": "date_time",
+                "source": "web_lk",
+                "identity_source": "web_lk",
+                "product": "lk",
+                "platform": "web",
+                "external_id": "e.client_id::text",
+                "joins": "",
+                "where_clause": """
+                    e.is_page_view=true
+                """,
+            },
         },
     ]
 
@@ -358,7 +367,8 @@ with DAG(
             python_callable=execute_presence,
             op_kwargs={
                 "source_task": cfg["source_task"],
-                "sql": PRESENCE_SQL.format(**cfg),
+                "sql_template": PRESENCE_SQL,
+                "sql_params": cfg["sql_params"],
             },
         )
 
