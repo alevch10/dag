@@ -254,7 +254,7 @@ def get_max_date_of_revenue_kpi():
 
 
 def select_revenue(start_date: datetime, end_date: datetime) -> float:
-    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    hook = PostgresHook(postgres_conn_id="pn_pg")
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     sql = SELECT_REVENUE_KPI.format(start_month=start_str, end_month=end_str)
@@ -265,7 +265,7 @@ def select_revenue(start_date: datetime, end_date: datetime) -> float:
 
 
 def update_revenue(month_date: datetime, revenue: float):
-    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    hook = PostgresHook(postgres_conn_id="pn_pg")
     month_str = month_date.strftime("%Y-%m-%d")
     sql = UPDATE_REVENUE_KPI.format(month=month_str, revenue=revenue)
     hook.run(sql)
@@ -323,7 +323,7 @@ def get_call_center_appointments(start_date: datetime, end_date: datetime) -> in
     Получаем количество записей, сделанных через КЦ, за указанный период.
     TO DO: Возможно, стоит объединить с select_revenue, так как логика очень похожа.
     """
-    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    hook = PostgresHook(postgres_conn_id="pn_pg")
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     sql = GET_CALL_CENTER_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
@@ -394,7 +394,7 @@ def get_ob_appointments(start_date: datetime, end_date: datetime) -> list[tuple]
     Получаем все записи, сделанные через онлайн-канал, за указанный период.
     TO DO: Возможно, стоит объединить с get_call_center_appointments, так как логика очень похожа.
     """
-    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    hook = PostgresHook(postgres_conn_id="pn_pg")
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     sql = GET_OB_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
