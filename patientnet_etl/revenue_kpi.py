@@ -5,6 +5,7 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 from datetime import datetime, timedelta
+from psycopg2.extras import execute_values
 
 
 GET_LAST_MONTH = """
@@ -112,6 +113,114 @@ JOIN discounts d ON d.presc_service_oid = p.presc_service_oid
 CROSS JOIN round_setting rs
 """
 
+SELECT_LAST_CALL_CENTER_DATE = """
+SELECT 
+    DATE_TRUNC('month', create_dt) AS month
+FROM
+    kpi.rate_kpi
+WHERE source = 'call_center'
+ORDER BY 
+    create_dt DESC
+LIMIT 1 
+"""
+
+SELECT_LAST_OB_DATE = """
+SELECT
+    DATE_TRUNC('month', create_dt) AS month
+FROM
+    kpi.appointments
+ORDER BY
+    create_dt DESC
+LIMIT 1
+
+"""
+
+GET_CALL_CENTER_APPOINTMENTS = """
+WITH
+  call_center AS (
+    SELECT
+      s2."oid" AS sotr_oid
+    FROM
+      mir.sotr s2
+      JOIN mir.post p ON p."oid" = s2.post
+    WHERE
+      p."oid" IN (
+        '26a45943-7d97-4034-8405-d00aa050dd57',
+        '48064f8f-1ac0-4b30-89f4-a1e93fde29c6'
+      )
+  )
+SELECT
+  COUNT(*) AS count
+FROM
+  mir.schedule s
+  JOIN mir.presc_schedule ps ON s.oid = ps.shedule_id
+  JOIN mir.presc p ON ps.presc_id = p.id
+  JOIN mir.presctype p2 ON ps.presctype = p2."oid"
+  JOIN mir.schedule_work_time sw ON s.work_time = sw.oid
+WHERE
+  s.islocked = 0
+  AND ps.presc_id IS NOT NULL
+  AND date (p.create_dt) >= '{start_date}'
+  AND date (p.create_dt) < '{end_date}'
+  AND p.creator_id IN (
+    SELECT
+      sotr_oid
+    FROM
+      call_center
+  )
+  AND p.presctype_id IN (
+    SELECT DISTINCT
+      (UNNEST(STRING_TO_ARRAY(sw.presctype, ',')))
+  )
+  AND p2.time_cells IS NOT NULL
+  AND (
+    'CHILD'::VARCHAR = ANY (p2.tags)
+    OR 'ADULT'::VARCHAR = ANY (p2.tags)
+  )
+  AND sw.insite = 1
+"""
+
+GET_OB_APPOINTMENTS = """
+WITH
+  cte AS (
+    SELECT
+      so.oid AS oid
+    FROM
+      mir.sotr so
+      JOIN mir.sysuser sys ON so.sysuser = sys.oid
+    WHERE
+      sys.oid = '5e95e526-907f-4eef-9093-ac0524a39f5b'
+  )
+SELECT
+  p.create_dt,
+  p.id
+FROM
+  mir.schedule s
+  JOIN mir.presc_schedule ps ON s.oid = ps.shedule_id
+  JOIN mir.presc p ON ps.presc_id = p.id
+  JOIN mir.presctype p2 ON ps.presctype = p2."oid"
+  JOIN mir.schedule_work_time sw ON s.work_time = sw.oid
+WHERE
+  ps.presc_id IS NOT NULL
+  AND p.creator_id IN (
+    SELECT
+      oid
+    FROM
+      cte
+  )
+  AND date (p.create_dt) >= '{start_date}'
+  AND date (p.create_dt) < '{end_date}'
+  order by 2 asc
+"""
+
+UPDATE_CALL_CENTER_KPI = """
+INSERT INTO kpi.rate_kpi (create_dt, source, count)
+VALUES ('{create_dt}', 'call_center', {count})
+ON CONFLICT (create_dt, source)
+DO UPDATE SET
+    count = EXCLUDED.count
+"""
+
 
 def add_month(date: datetime) -> datetime:
     if date.month == 12:
@@ -165,7 +274,7 @@ def update_revenue(month_date: datetime, revenue: float):
 
 def get_kpi_revenue(max_date):
     if max_date is None:
-        start_date: datetime = (2025, 1, 1)
+        start_date = datetime(2025, 1, 1)
         logging.info("No previous data found. Starting from 2025-01-01")
     else:
         start_date = month_ago(max_date)
@@ -175,13 +284,154 @@ def get_kpi_revenue(max_date):
 
     current_month = get_current_month_start()
 
-    while start_date <= current_month():
+    while start_date <= current_month:
         end_date = add_month(start_date)
         revenue = select_revenue(start_date, end_date)
         update_revenue(start_date, revenue)
         start_date = end_date
 
-        logging.info("All months up to current have been processed.")
+    logging.info("All months up to current have been processed.")
+
+
+def get_call_center_max_date():
+    """
+    Получаем последний месяц, за который был выполнен расчет количества записей, сделанных через КЦ.
+    TO DO: Возможно, стоит объединить с get_max_date_of_revenue_kpi, так как логика очень похожа.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    sql = SELECT_LAST_CALL_CENTER_DATE
+    result = hook.get_first(sql)
+    logging.info(f"Last call center date: {result}")
+    max_date = result[0] if result else None
+    return max_date
+
+
+def update_call_center_kpi(create_dt: datetime, count: int):
+    """
+    Обновляем количество записей, сделанных через КЦ, в таблице kpi
+    TO DO: Возможно, стоит объединить с update_revenue, так как логика очень похожа.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    create_dt_str = create_dt.strftime("%Y-%m-%d")
+    sql = UPDATE_CALL_CENTER_KPI.format(create_dt=create_dt_str, count=count)
+    hook.run(sql)
+    logging.info(f"Updated call center KPI for {create_dt_str}: {count}")
+
+
+def get_call_center_appointments(start_date: datetime, end_date: datetime) -> int:
+    """
+    Получаем количество записей, сделанных через КЦ, за указанный период.
+    TO DO: Возможно, стоит объединить с select_revenue, так как логика очень похожа.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+    sql = GET_CALL_CENTER_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
+    result = hook.get_first(sql)
+    count = result[0] if result and result[0] is not None else 0
+    logging.info(f"Call center appointments from {start_str} to {end_str}: {count}")
+    return count
+
+
+def process_call_center_kpi(max_date):
+    """
+    Обрабатываем количество записей, сделанных через КЦ, начиная с последнего месяца, за который был выполнен расчет.
+    TO DO: Возможно, стоит объединить с get_kpi_revenue, так как логика очень похожа.
+    """
+    if max_date is None:
+        start_date = datetime(2025, 1, 1)
+        logging.info("No previous call center data found. Starting from 2025-01-01")
+    else:
+        start_date = month_ago(max_date)
+        if start_date < datetime(2025, 1, 1):
+            start_date = datetime(2025, 1, 1)
+        logging.info(
+            f"Last call center date found: {max_date}. Starting from {start_date}"
+        )
+
+    current_month = get_current_month_start()
+
+    while start_date <= current_month:
+        end_date = add_month(start_date)
+        count = get_call_center_appointments(start_date, end_date)
+        update_call_center_kpi(start_date, count)
+        start_date = end_date
+
+    logging.info("All call center months up to current have been processed.")
+
+
+def get_ob_max_date():
+    """
+    Получаем последнюю дату, за которую у нас есть записи, сделанные через онлайн-канал.
+    TO DO: Возможно, стоит объединить с get_max_date_of_revenue_kpi, так как логика очень похожа.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    sql = SELECT_LAST_OB_DATE
+    result = hook.get_first(sql)
+    logging.info(f"Last online appointments date: {result}")
+    max_date = result[0] if result else None
+    return max_date
+
+
+def load_appointments(data: list[tuple]):
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    conn = hook.get_conn()
+    cursor = conn.cursor()
+    sql = """
+        INSERT INTO kpi.appointments (create_dt, appointment_id)
+        VALUES %s
+        ON CONFLICT (appointment_id) DO NOTHING
+    """
+    execute_values(cursor, sql, data, page_size=10000)
+    inserted = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    logging.info(f"Inserted {inserted} new records into kpi.appointments")
+
+
+def get_ob_appointments(start_date: datetime, end_date: datetime) -> list[tuple]:
+    """
+    Получаем все записи, сделанные через онлайн-канал, за указанный период.
+    TO DO: Возможно, стоит объединить с get_call_center_appointments, так как логика очень похожа.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+    sql = GET_OB_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
+    result = hook.get_records(sql)
+    logging.info(
+        f"Online appointments from {start_str} to {end_str}: {len(result)} records found"
+    )
+    return result
+
+
+def process_ob_appointments(max_date):
+    """
+    Обрабатываем все записи, сделанные через онлайн-канал, начиная с последнего месяца, за который был выполнен расчет.
+    TO DO: Возможно, стоит объединить с process_call_center_kpi, так как логика очень похожа.
+    """
+    if max_date is None:
+        start_date = datetime(2025, 1, 1)
+        logging.info(
+            "No previous online appointments data found. Starting from 2025-01-01"
+        )
+    else:
+        start_date = month_ago(max_date)
+        if start_date < datetime(2025, 1, 1):
+            start_date = datetime(2025, 1, 1)
+        logging.info(
+            f"Last online appointments date found: {max_date}. Starting from {start_date}"
+        )
+
+    current_month = get_current_month_start()
+
+    while start_date <= current_month:
+        end_date = add_month(start_date)
+        appointments = get_ob_appointments(start_date, end_date)
+        load_appointments(appointments)
+        start_date = end_date
+
+    logging.info("All online appointments months up to current have been processed.")
 
 
 default_args = {
@@ -193,7 +443,7 @@ default_args = {
 with DAG(
     dag_id="patientnet_etl",
     start_date=datetime(2026, 7, 27),
-    schedule="0 0 * * *",
+    schedule="0 1 * * *",
     catchup=False,
     default_args=default_args,
     tags=["kpi", "patientnet", "revenue"],
@@ -207,4 +457,30 @@ with DAG(
         python_callable=get_kpi_revenue,
         op_args=[get_last_month.output],
     )
-    get_last_month >> get_revenue
+    get_call_center_last_month = PythonOperator(
+        task_id="get_call_center_last_month",
+        python_callable=get_call_center_max_date,
+    )
+    process_call_center_amount = PythonOperator(
+        task_id="process_call_center_amount",
+        python_callable=process_call_center_kpi,
+        op_args=[get_call_center_last_month.output],
+    )
+    get_ob_last_month = PythonOperator(
+        task_id="get_ob_last_month",
+        python_callable=get_ob_max_date,
+    )
+    process_ob_appointments_ = PythonOperator(
+        task_id="process_ob_appointments",
+        python_callable=process_ob_appointments,
+        op_args=[get_ob_last_month.output],
+    )
+
+    (
+        get_last_month
+        >> get_revenue
+        >> get_call_center_last_month
+        >> process_call_center_amount
+        >> get_ob_last_month
+        >> process_ob_appointments_
+    )
