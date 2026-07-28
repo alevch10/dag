@@ -221,6 +221,24 @@ DO UPDATE SET
     count = EXCLUDED.count
 """
 
+def diagnose_connections():
+    hook = PostgresHook(postgres_conn_id="pn_pg")
+    # Какая БД?
+    db = hook.get_first("SELECT current_database();")
+    logging.info(f"pn_pg current database: {db}")
+    # Есть ли таблица mir.people?
+    try:
+        hook.get_first("SELECT 1 FROM mir.people LIMIT 1;")
+        logging.info("Table mir.people EXISTS in pn_pg")
+    except Exception as e:
+        logging.error(f"Table mir.people NOT FOUND in pn_pg: {e}")
+        raise
+
+    # Аналогично для dwh_pg, если нужно
+    hook2 = PostgresHook(postgres_conn_id="dwh_pg")
+    db2 = hook2.get_first("SELECT current_database();")
+    logging.info(f"dwh_pg current database: {db2}")
+
 
 def add_month(date: datetime) -> datetime:
     if date.month == 12:
@@ -448,6 +466,10 @@ with DAG(
     default_args=default_args,
     tags=["kpi", "patientnet", "revenue"],
 ) as dag:
+    diagnose_connections_task = PythonOperator(
+        task_id="diagnose_connections",
+        python_callable=diagnose_connections,
+    )
     get_last_month = PythonOperator(
         task_id="get_last_month",
         python_callable=get_max_date_of_revenue_kpi,
@@ -477,7 +499,8 @@ with DAG(
     )
 
     (
-        get_last_month
+        diagnose_connections_task
+        >> get_last_month
         >> get_revenue
         >> get_call_center_last_month
         >> process_call_center_amount
