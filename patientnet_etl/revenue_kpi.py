@@ -120,7 +120,7 @@ FROM
     kpi.rate_kpi
 WHERE source = 'call_center'
 ORDER BY 
-    create_dt DESC
+    month DESC
 LIMIT 1 
 """
 
