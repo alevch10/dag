@@ -214,9 +214,9 @@ WHERE
 """
 
 UPDATE_CALL_CENTER_KPI = """
-INSERT INTO kpi.rate_kpi (create_dt, source, count)
+INSERT INTO kpi.rate_kpi (month, source, count)
 VALUES ('{create_dt}', 'call_center', {count})
-ON CONFLICT (create_dt, source)
+ON CONFLICT (month, source)
 DO UPDATE SET
     count = EXCLUDED.count
 """
