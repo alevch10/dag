@@ -265,7 +265,7 @@ def select_revenue(start_date: datetime, end_date: datetime) -> float:
 
 
 def update_revenue(month_date: datetime, revenue: float):
-    hook = PostgresHook(postgres_conn_id="pn_pg")
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
     month_str = month_date.strftime("%Y-%m-%d")
     sql = UPDATE_REVENUE_KPI.format(month=month_str, revenue=revenue)
     hook.run(sql)
