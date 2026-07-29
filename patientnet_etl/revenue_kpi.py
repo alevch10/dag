@@ -14,7 +14,7 @@ SELECT
 FROM
     kpi.revenue_kpi
 ORDER BY 
-    last_month DESC
+    month DESC
 LIMIT 1
 """
 
