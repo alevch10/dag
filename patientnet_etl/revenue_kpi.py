@@ -4,7 +4,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from psycopg2.extras import execute_values
 
 
@@ -126,11 +126,11 @@ LIMIT 1
 
 SELECT_LAST_OB_DATE = """
 SELECT
-    DATE_TRUNC('month', create_dt) AS month
+    DATE_TRUNC('month', create_dt)::date AS month
 FROM
     kpi.appointments
 ORDER BY
-    create_dt DESC
+    month DESC
 LIMIT 1
 
 """
@@ -221,7 +221,7 @@ DO UPDATE SET
     count = EXCLUDED.count
 """
 
-def add_month(date: datetime) -> datetime:
+def add_month(date: date) -> date:
     if date.month == 12:
         result = date.replace(year=date.year + 1, month=1, day=1)
     else:
@@ -229,7 +229,7 @@ def add_month(date: datetime) -> datetime:
     return result
 
 
-def month_ago(date: datetime) -> datetime:
+def month_ago(date: date) -> date:
     if date.month == 1:
         result = date.replace(year=date.year - 1, month=12, day=1)
     else:
@@ -237,10 +237,10 @@ def month_ago(date: datetime) -> datetime:
     return result
 
 
-def get_current_month_start() -> datetime:
+def get_current_month_start() -> date:
     """Возвращает первый день текущего месяца (без времени)."""
-    now = datetime.now()
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    today = date.today()
+    return today.replace(day=1)
 
 
 def get_max_date_of_revenue_kpi():
@@ -252,10 +252,10 @@ def get_max_date_of_revenue_kpi():
     return max_date
 
 
-def select_revenue(start_date: datetime, end_date: datetime) -> float:
+def select_revenue(start_date: date, end_date: date) -> float:
     hook = PostgresHook(postgres_conn_id="pn_pg")
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
     sql = SELECT_REVENUE_KPI.format(start_month=start_str, end_month=end_str)
     result = hook.get_first(sql)
     revenue = result[0] if result and result[0] is not None else 0.0
@@ -263,9 +263,9 @@ def select_revenue(start_date: datetime, end_date: datetime) -> float:
     return revenue
 
 
-def update_revenue(month_date: datetime, revenue: float):
+def update_revenue(month_date: date, revenue: float):
     hook = PostgresHook(postgres_conn_id="dwh_pg")
-    month_str = month_date.strftime("%Y-%m-%d")
+    month_str = month_date.isoformat()
     sql = UPDATE_REVENUE_KPI.format(month=month_str, revenue=revenue)
     hook.run(sql)
     logging.info(f"Updated revenue for {month_str}: {revenue}")
@@ -273,12 +273,12 @@ def update_revenue(month_date: datetime, revenue: float):
 
 def get_kpi_revenue(max_date):
     if max_date is None:
-        start_date = datetime(2025, 1, 1)
+        start_date = date(2025, 1, 1)
         logging.info("No previous data found. Starting from 2025-01-01")
     else:
         start_date = month_ago(max_date)
-        if start_date < datetime(2025, 1, 1):
-            start_date = datetime(2025, 1, 1)
+        if start_date < date(2025, 1, 1):
+            start_date = date(2025, 1, 1)
         logging.info(f"Last month found: {max_date}. Starting from {start_date}")
 
     current_month = get_current_month_start()
@@ -302,31 +302,30 @@ def get_call_center_max_date():
     result = hook.get_first(sql)
     logging.info(f"Last call center date: {result}")
     logging.info(type(result[0]))
-    logging.info(result[0].tzinfo)
     max_date = result[0] if result else None
     return max_date
 
 
-def update_call_center_kpi(create_dt: datetime, count: int):
+def update_call_center_kpi(create_dt: date, count: int):
     """
     Обновляем количество записей, сделанных через КЦ, в таблице kpi
     TO DO: Возможно, стоит объединить с update_revenue, так как логика очень похожа.
     """
     hook = PostgresHook(postgres_conn_id="dwh_pg")
-    create_dt_str = create_dt.strftime("%Y-%m-%d")
+    create_dt_str = create_dt.isoformat()
     sql = UPDATE_CALL_CENTER_KPI.format(create_dt=create_dt_str, count=count)
     hook.run(sql)
     logging.info(f"Updated call center KPI for {create_dt_str}: {count}")
 
 
-def get_call_center_appointments(start_date: datetime, end_date: datetime) -> int:
+def get_call_center_appointments(start_date: date, end_date: date) -> int:
     """
     Получаем количество записей, сделанных через КЦ, за указанный период.
     TO DO: Возможно, стоит объединить с select_revenue, так как логика очень похожа.
     """
     hook = PostgresHook(postgres_conn_id="pn_pg")
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
     sql = GET_CALL_CENTER_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
     result = hook.get_first(sql)
     count = result[0] if result and result[0] is not None else 0
@@ -340,12 +339,12 @@ def process_call_center_kpi(max_date):
     TO DO: Возможно, стоит объединить с get_kpi_revenue, так как логика очень похожа.
     """
     if max_date is None:
-        start_date = datetime(2025, 1, 1)
+        start_date = date(2025, 1, 1)
         logging.info("No previous call center data found. Starting from 2025-01-01")
     else:
         start_date = month_ago(max_date)
-        if start_date < datetime(2025, 1, 1):
-            start_date = datetime(2025, 1, 1)
+        if start_date < date(2025, 1, 1):
+            start_date = date(2025, 1, 1)
         logging.info(
             f"Last call center date found: {max_date}. Starting from {start_date}"
         )
@@ -390,14 +389,14 @@ def load_appointments(data: list[tuple]):
     logging.info(f"Inserted {inserted} new records into kpi.appointments")
 
 
-def get_ob_appointments(start_date: datetime, end_date: datetime) -> list[tuple]:
+def get_ob_appointments(start_date: date, end_date: date) -> list[tuple]:
     """
     Получаем все записи, сделанные через онлайн-канал, за указанный период.
     TO DO: Возможно, стоит объединить с get_call_center_appointments, так как логика очень похожа.
     """
     hook = PostgresHook(postgres_conn_id="pn_pg")
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
     sql = GET_OB_APPOINTMENTS.format(start_date=start_str, end_date=end_str)
     result = hook.get_records(sql)
     logging.info(
@@ -412,14 +411,14 @@ def process_ob_appointments(max_date):
     TO DO: Возможно, стоит объединить с process_call_center_kpi, так как логика очень похожа.
     """
     if max_date is None:
-        start_date = datetime(2025, 1, 1)
+        start_date = date(2025, 1, 1)
         logging.info(
             "No previous online appointments data found. Starting from 2025-01-01"
         )
     else:
         start_date = month_ago(max_date)
-        if start_date < datetime(2025, 1, 1):
-            start_date = datetime(2025, 1, 1)
+        if start_date < date(2025, 1, 1):
+            start_date = date(2025, 1, 1)
         logging.info(
             f"Last online appointments date found: {max_date}. Starting from {start_date}"
         )
