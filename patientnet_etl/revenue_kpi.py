@@ -1,7 +1,7 @@
 import logging
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ from psycopg2.extras import execute_values
 
 GET_LAST_MONTH = """
 SELECT
-    DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AS last_month
+    month::date
 FROM
     kpi.revenue_kpi
 ORDER BY 
@@ -115,7 +115,7 @@ CROSS JOIN round_setting rs
 
 SELECT_LAST_CALL_CENTER_DATE = """
 SELECT 
-    DATE_TRUNC('month', month) AS month
+    month::date
 FROM
     kpi.rate_kpi
 WHERE source = 'call_center'
@@ -301,6 +301,8 @@ def get_call_center_max_date():
     sql = SELECT_LAST_CALL_CENTER_DATE
     result = hook.get_first(sql)
     logging.info(f"Last call center date: {result}")
+    logging.info(type(result[0]))
+    logging.info(result[0].tzinfo)
     max_date = result[0] if result else None
     return max_date
 
