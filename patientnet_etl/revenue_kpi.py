@@ -27,90 +27,113 @@ DO UPDATE SET
 """
 
 SELECT_REVENUE_KPI = """
-WITH base_services AS (
+WITH
+  base_services AS (
     SELECT
-        people.oid AS people_oid,
-        services.pay_type,
-        presc.id AS presc_id,
-        ps.oid AS presc_service_oid
-    FROM mir.people people
-    JOIN mir.mdoc mdoc ON people.oid = mdoc.people_id
-    JOIN mir.presc presc ON mdoc.id = presc.mdoc_id
-    JOIN mir.presc_service ps ON ps.presc = presc.id
-    JOIN mir.service_presctype sp ON ps.service_presctype = sp.oid
-    JOIN mir.services services ON sp.service = services.oid
+      people.oid AS people_oid,
+      services.pay_type,
+      presc.id AS presc_id,
+      ps.oid AS presc_service_oid
+    FROM
+      mir.people people
+      JOIN mir.mdoc mdoc ON people.oid = mdoc.people_id
+      JOIN mir.presc presc ON mdoc.id = presc.mdoc_id
+      JOIN mir.presc_service ps ON ps.presc = presc.id
+      JOIN mir.service_presctype sp ON ps.service_presctype = sp.oid
+      JOIN mir.services services ON sp.service = services.oid
     WHERE
-        presc.presc_state_id IN ('sign', 'done_lab', 'done', 'done_other_lpu')
-        AND presc.upd_dt >= '{start_month}'
-        AND presc.upd_dt <  '{end_month}'
-        AND services.pay_type NOT IN ('sp_budget', 'budget')
-        AND EXISTS (
-            SELECT 1
-            FROM mir.sotr sotr
-            JOIN mir.sysuser sysuser ON sotr.sysuser = sysuser.oid
-            WHERE sotr.oid = presc.creator_id
-              AND sysuser.oid = '5e95e526-907f-4eef-9093-ac0524a39f5b'
-        )),
-prices AS (
+      presc.presc_state_id IN ('sign', 'done_lab', 'done', 'done_other_lpu')
+      AND presc.upd_dt >= '{start_month}'
+      AND presc.upd_dt <  '{end_month}'
+      AND services.pay_type NOT IN ('sp_budget', 'budget')
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          mir.sotr sotr
+          JOIN mir.sysuser sysuser ON sotr.sysuser = sysuser.oid
+        WHERE
+          sotr.oid = presc.creator_id
+          AND sysuser.oid = '5e95e526-907f-4eef-9093-ac0524a39f5b'
+      )
+  ),
+  finance_plans AS (
+    SELECT DISTINCT
+      fpps.presc_service AS presc_service_oid
+    FROM
+      pay.finance_plan_presc_service fpps
+      JOIN pay.finance_plan plan ON plan.oid = fpps.finance_plan
+      JOIN mir.visit vis ON vis.id = CAST(plan.visit AS bpchar (36))
+    WHERE
+      vis.pay_type_id = 'cash'
+      AND plan.fixed = TRUE
+      AND CURRENT_DATE BETWEEN plan.date_begin AND plan.date_end
+  ),
+  discount_agg AS (
     SELECT
-        bs.pay_type,
-        bs.presc_service_oid,
-        mir.get_price_by_presc(bs.presc_id, bs.presc_service_oid) AS base_price
-    FROM base_services bs
-),
-discounts AS (
+      dp.presc_service AS presc_service_oid,
+      SUM(COALESCE(dp.percent, d.percent)) AS sum_percent,
+      SUM(dp.fix_sum) AS fix_sum_discount
+    FROM
+      mir.discount_presc dp
+      LEFT JOIN mir.discount d ON d.oid = dp.discount
+    GROUP BY
+      dp.presc_service
+  ),
+  discounts AS (
     SELECT
-        bs.presc_service_oid,
-        CASE
-            WHEN NOT EXISTS (
-                SELECT 1
-                FROM pay.finance_plan_presc_service fpps
-                JOIN pay.finance_plan plan ON plan.oid = fpps.finance_plan
-                JOIN mir.visit vis ON vis.id = CAST(plan.visit AS bpchar(36))
-                WHERE fpps.presc_service = bs.presc_service_oid
-                  AND vis.pay_type_id = 'cash'
-                  AND plan.fixed = true
-                  AND CURRENT_DATE BETWEEN plan.date_begin AND plan.date_end
-            )
-            THEN SUM(COALESCE(dp.percent, d.percent))
-        END AS sum_percent,
-        CASE
-            WHEN NOT EXISTS (
-                SELECT 1
-                FROM pay.finance_plan_presc_service fpps
-                JOIN pay.finance_plan plan ON plan.oid = fpps.finance_plan
-                JOIN mir.visit vis ON vis.id = CAST(plan.visit AS bpchar(36))
-                WHERE fpps.presc_service = bs.presc_service_oid
-                  AND vis.pay_type_id = 'cash'
-                  AND plan.fixed = true
-                  AND CURRENT_DATE BETWEEN plan.date_begin AND plan.date_end
-            )
-            THEN SUM(dp.fix_sum)
-        END AS fix_sum_discount
-    FROM base_services bs
-    LEFT JOIN mir.discount_presc dp ON dp.presc_service = CAST(bs.presc_service_oid AS varchar)
-    LEFT JOIN mir.discount d ON d.oid = dp.discount
-    GROUP BY bs.presc_service_oid
-),
-round_setting AS (
-    SELECT valuepar FROM mir.systemsettings WHERE param = 'DiscountAmountRounding'
-)
+      bs.presc_service_oid,
+      CASE
+        WHEN fp.presc_service_oid IS NULL THEN da.sum_percent
+      END AS sum_percent,
+      CASE
+        WHEN fp.presc_service_oid IS NULL THEN da.fix_sum_discount
+      END AS fix_sum_discount
+    FROM
+      base_services bs
+      LEFT JOIN finance_plans fp ON fp.presc_service_oid = bs.presc_service_oid
+      LEFT JOIN discount_agg da ON da.presc_service_oid = bs.presc_service_oid
+  ),
+  prices AS (
+    SELECT
+      bs.presc_service_oid,
+      mir.get_price_by_presc (bs.presc_id, bs.presc_service_oid) AS base_price
+    FROM
+      base_services bs
+  ),
+  round_setting AS (
+    SELECT
+      valuepar
+    FROM
+      mir.systemsettings
+    WHERE
+      param = 'DiscountAmountRounding'
+  )
 SELECT
-    SUM(
-        CASE
-            WHEN d.sum_percent IS NOT NULL THEN
-                CASE rs.valuepar
-                    WHEN '1' THEN CEILING(p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0))
-                    WHEN '2' THEN TRUNC(p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0))
-                    WHEN '3' THEN ROUND(p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0))
-                    ELSE ROUND(p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0), 2)
-                END
-            ELSE p.base_price
-        END
-    ) AS revenue
-FROM prices p
-JOIN discounts d ON d.presc_service_oid = p.presc_service_oid
-CROSS JOIN round_setting rs
+  SUM(
+    CASE
+      WHEN d.sum_percent IS NOT NULL THEN CASE rs.valuepar
+        WHEN '1' THEN CEILING(
+          p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0)
+        )
+        WHEN '2' THEN TRUNC(
+          p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0)
+        )
+        WHEN '3' THEN ROUND(
+          p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0)
+        )
+        ELSE ROUND(
+          p.base_price - (p.base_price * d.sum_percent / 100) - COALESCE(d.fix_sum_discount, 0),
+          2
+        )
+      END
+      ELSE p.base_price
+    END
+  ) AS revenue
+FROM
+  prices p
+  JOIN discounts d ON d.presc_service_oid = p.presc_service_oid
+  CROSS JOIN round_setting rs;
 """
 
 SELECT_LAST_CALL_CENTER_DATE = """
