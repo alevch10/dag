@@ -10,7 +10,6 @@ from datetime import datetime
     catchup=False,
 )
 def test_both_pg_connections():
-    
     @task
     def test_dwh_pg():
         hook = PostgresHook(postgres_conn_id="dwh_pg")

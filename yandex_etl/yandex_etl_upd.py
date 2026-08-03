@@ -1,14 +1,18 @@
+from dateutil.relativedelta import relativedelta
+from dateutil.utils import today
+
 from airflow import DAG
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.operators.python import PythonOperator
 from airflow.sdk import Variable, timezone
 from airflow.exceptions import AirflowSkipException
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 import logging
 import os
+import calendar
 
 
 def load_file(path):
@@ -136,26 +140,100 @@ SET
     updated_at = now();
 """
 
+MAU_OB_SQL = """
+INSERT INTO kpi.total_ob_users
+(
+    year,
+    count
+)
+
+SELECT
+    %(year)s,
+
+    COUNT(
+        DISTINCT COALESCE(
+            internal_user_id::text,
+            source || ':' || external_user_id
+        )
+    )
+
+FROM kpi.user_presence
+
+WHERE
+    product='oz'
+AND activity_date >= make_date(%(year)s,1,1)
+AND activity_date <= LEAST(
+
+    CURRENT_DATE,
+
+    make_date(%(year)s,12,31)
+
+)
+
+ON CONFLICT(year)
+DO UPDATE
+SET count=excluded.count;
+"""
+MAU_LK_SQL = """
+INSERT INTO kpi.mau_lk_kpi(month,count)
+WITH lk_users AS (
+    SELECT
+        COALESCE(
+            internal_user_id::text,
+            external_user_id
+        ) AS user_id
+    FROM kpi.user_presence
+    WHERE
+        product='lk'
+    AND platform='mobile'
+    AND activity_date >= %(month)s::date
+    AND activity_date < %(next_month)s::date
+    UNION
+    SELECT
+        internal_user_id::text
+    FROM kpi.user_presence
+    WHERE
+        product='lk'
+    AND platform='web'
+    AND internal_user_id IS NOT NULL
+    AND activity_date >= %(month)s::date
+    AND activity_date < %(next_month)s::date
+
+)
+SELECT
+    %(month)s::date,
+    COUNT(DISTINCT user_id)
+FROM lk_users
+ON CONFLICT(month)
+DO UPDATE
+SET count=excluded.count;
+"""
+
 
 def execute_sql(sql, source_task, **context):
     ti = context["ti"]
     dates = ti.xcom_pull(task_ids=source_task)
+
     if not dates:
         raise Exception(f"No dates from {source_task}")
 
-    # Форматируем SQL с подстановкой дат
-    formatted_sql = sql.format(**dates)
-
     hook = PostgresHook(postgres_conn_id="dwh_pg")
+
     logging.info(
         f"""
         SQL execution
         source task: {source_task}
         period: {dates}
-        SQL: {formatted_sql}
         """
     )
-    hook.run(formatted_sql)
+
+    hook.run(
+        sql,
+        parameters={
+            "start_date": dates["start_date"],
+            "end_date": dates["end_date"],
+        },
+    )
 
 
 default_args = {
@@ -192,6 +270,100 @@ def execute_presence(sql_template, sql_params, source_task, **context):
         period: {dates["start_date"]} - {dates["end_date"]}
         """
     )
+
+
+def rebuild_monthly_kpi(
+    table_name,
+    start_if_empty,
+    sql_template,
+    **context,
+):
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+
+    last_month = hook.get_first(
+        f"""
+        SELECT MAX(month)
+        FROM {table_name}
+        """
+    )[0]
+
+    if last_month:
+        start_month = last_month.replace(day=1) - relativedelta(months=1)
+    else:
+        start_month = start_if_empty
+
+    today = timezone.utcnow().date()
+    current_month = today.replace(day=1)
+
+    month = start_month
+
+    while month <= current_month:
+        next_month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+        logging.info(f"Rebuild {table_name}: {month} - {next_month}")
+
+        hook.run(
+            sql_template,
+            parameters={
+                "month": month,
+                "next_month": next_month,
+            },
+        )
+
+        month = next_month
+
+
+def rebuild_total_ob_users(**context):
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+
+    today = timezone.utcnow().date()
+    current_year = today.year
+
+    for year in range(2025, current_year + 1):
+        start_date = datetime(year, 1, 1).date()
+
+        if year == current_year:
+            end_date = today
+        else:
+            try:
+                end_date = date(year, today.month, today.day)
+            except ValueError:
+                end_date = date(
+                    year, today.month, calendar.monthrange(year, today.month)[1]
+                )
+
+        logging.info(f"Rebuild total_ob_users for {year}")
+
+        hook.run(
+            """
+            INSERT INTO kpi.total_ob_users
+            (
+                year,
+                count
+            )
+            SELECT
+                %(year)s,
+                COUNT(
+                    DISTINCT COALESCE(
+                        internal_user_id::text,
+                        source || ':' || external_user_id
+                    )
+                )
+            FROM kpi.user_presence
+
+            WHERE product='oz'
+              AND activity_date BETWEEN %(start_date)s
+                                   AND %(end_date)s
+            ON CONFLICT (year)
+            DO UPDATE SET
+                count = EXCLUDED.count;
+            """,
+            parameters={
+                "year": year,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
 
 
 with DAG(
@@ -244,6 +416,31 @@ with DAG(
             "yaml_template": load_yaml("web_lk.yaml"),
             "source_name": "Web LK",
         },
+    )
+
+    rebuild_mau_ob = PythonOperator(
+        task_id="rebuild_mau_ob",
+        python_callable=rebuild_monthly_kpi,
+        op_kwargs={
+            "table_name": "kpi.mau_ob_kpi",
+            "start_if_empty": datetime(2025, 1, 1).date(),
+            "sql_template": MAU_OB_SQL,
+        },
+    )
+
+    rebuild_mau_lk = PythonOperator(
+        task_id="rebuild_mau_lk",
+        python_callable=rebuild_monthly_kpi,
+        op_kwargs={
+            "table_name": "kpi.mau_lk_kpi",
+            "start_if_empty": datetime(2026, 1, 1).date(),
+            "sql_template": MAU_LK_SQL,
+        },
+    )
+
+    rebuild_total_ob_users_task = PythonOperator(
+        task_id="rebuild_total_ob_users",
+        python_callable=rebuild_total_ob_users,
     )
 
     # ==========================================================
@@ -396,3 +593,12 @@ with DAG(
     load_web_lk >> identity_tasks["build_identity_web_lk"]
 
     identity_tasks["build_identity_web_lk"] >> presence_tasks["presence_web_lk"]
+
+    [
+        presence_tasks["presence_booking"],
+        presence_tasks["presence_web_lk"],
+    ] >> rebuild_mau_ob
+
+    rebuild_mau_ob >> rebuild_mau_lk
+
+    rebuild_mau_lk >> rebuild_total_ob_users_task

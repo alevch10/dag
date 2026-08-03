@@ -244,6 +244,7 @@ DO UPDATE SET
     count = EXCLUDED.count
 """
 
+
 def add_month(date: date) -> date:
     if date.month == 12:
         result = date.replace(year=date.year + 1, month=1, day=1)
