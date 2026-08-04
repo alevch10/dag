@@ -118,8 +118,8 @@ AND ui.external_user_id::TEXT = {external_id}
 {joins}
 WHERE
     {where_clause}
-    AND e.{date_field} >= '{start_date}'::date
-    AND e.{date_field} < ('{end_date}'::date + interval '1 day')
+    AND e.{date_field} >= %(start_date)s::date
+    AND e.{date_field} < (%(end_date)s::date + interval '1 day')
 GROUP BY
     DATE(e.{date_field}),
     {external_id}
