@@ -140,40 +140,31 @@ SET
     updated_at = now();
 """
 
-MAU_OB_SQL = """
-INSERT INTO kpi.total_ob_users
-(
-    year,
-    count
-)
+# MAU_OB_SQL = """
+# INSERT INTO kpi.mau_ob_kpi
+# (
+#     month,
+#     count
+# )
+# SELECT
+#     %(month)s::date,
+#     COUNT(
+#         DISTINCT COALESCE(
+#             internal_user_id::text,
+#             source || ':' || external_user_id
+#         )
+#     )
+# FROM kpi.user_presence
+# WHERE
+#     product='oz'
+# AND activity_date >= %(month)s::date
+# AND activity_date < %(next_month)s::date
 
-SELECT
-    %(year)s,
+# ON CONFLICT(month)
+# DO UPDATE
+# SET count=excluded.count;
+# """
 
-    COUNT(
-        DISTINCT COALESCE(
-            internal_user_id::text,
-            source || ':' || external_user_id
-        )
-    )
-
-FROM kpi.user_presence
-
-WHERE
-    product='oz'
-AND activity_date >= make_date(%(year)s,1,1)
-AND activity_date <= LEAST(
-
-    CURRENT_DATE,
-
-    make_date(%(year)s,12,31)
-
-)
-
-ON CONFLICT(year)
-DO UPDATE
-SET count=excluded.count;
-"""
 MAU_LK_SQL = """
 INSERT INTO kpi.mau_lk_kpi(month,count)
 WITH lk_users AS (
@@ -298,7 +289,7 @@ def rebuild_monthly_kpi(
     month = start_month
 
     while month <= current_month:
-        next_month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
+        next_month = month + relativedelta(months=1)
 
         logging.info(f"Rebuild {table_name}: {month} - {next_month}")
 
