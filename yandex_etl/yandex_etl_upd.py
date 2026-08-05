@@ -1,11 +1,11 @@
 from dateutil.relativedelta import relativedelta
-from dateutil.utils import today
 
 from airflow import DAG
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.operators.python import PythonOperator
 from airflow.sdk import Variable, timezone
 from airflow.exceptions import AirflowSkipException
+from airflow.utils.trigger_rule import TriggerRule
 
 from datetime import date, datetime, timedelta
 
@@ -140,30 +140,30 @@ SET
     updated_at = now();
 """
 
-# MAU_OB_SQL = """
-# INSERT INTO kpi.mau_ob_kpi
-# (
-#     month,
-#     count
-# )
-# SELECT
-#     %(month)s::date,
-#     COUNT(
-#         DISTINCT COALESCE(
-#             internal_user_id::text,
-#             source || ':' || external_user_id
-#         )
-#     )
-# FROM kpi.user_presence
-# WHERE
-#     product='oz'
-# AND activity_date >= %(month)s::date
-# AND activity_date < %(next_month)s::date
+MAU_OB_SQL = """
+INSERT INTO kpi.mau_ob_kpi
+(
+    month,
+    count
+)
+SELECT
+    %(month)s::date,
+    COUNT(
+        DISTINCT COALESCE(
+            internal_user_id::text,
+            source || ':' || external_user_id
+        )
+    )
+FROM kpi.user_presence
+WHERE
+    product='oz'
+AND activity_date >= %(month)s::date
+AND activity_date < %(next_month)s::date
 
-# ON CONFLICT(month)
-# DO UPDATE
-# SET count=excluded.count;
-# """
+ON CONFLICT(month)
+DO UPDATE
+SET count=excluded.count;
+"""
 
 MAU_LK_SQL = """
 INSERT INTO kpi.mau_lk_kpi(month,count)
@@ -560,8 +560,62 @@ with DAG(
             },
         )
 
+    start_booking = PythonOperator(
+        task_id="start_booking",
+        python_callable=lambda: None,
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+
+    start_web_lk = PythonOperator(
+        task_id="start_web_lk",
+        python_callable=lambda: None,
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+    start_kpi = PythonOperator(
+        task_id="start_kpi",
+        python_callable=lambda: None,
+        trigger_rule=TriggerRule.NONE_FAILED,
+    )
+
+    # ===================
+    # Scheme
+    # ===================
+    #
+    #    AppMetrica
+    #        │
+    #    Identity
+    #        │
+    #┌───────┴────────┐
+    #│                │
+    #Presence OZ   Presence LK
+    #└──────┬─────────┘
+    #        │
+    #    ALL_DONE
+    #        │
+    #    Booking
+    #        │
+    #    Identity
+    #        │
+    #    Presence
+    #        │
+    #   ALL_DONE
+    #        │
+    #    Web LK
+    #        │
+    #    Identity
+    #        │
+    #    Presence
+    #        │
+    #   NONE_FAILED
+    #        │
+    #    MAU OB
+    #        │
+    #    MAU LK
+    #        │
+    #   Total OB
+    
     # ==========================================================
-    # Dependencies
+    # AppMetrica
     # ==========================================================
 
     load_appmetrica >> identity_tasks["build_identity_appmetrica"]
@@ -570,26 +624,42 @@ with DAG(
         presence_tasks["presence_appmetrica_oz"],
         presence_tasks["presence_appmetrica_lk"],
     ]
+    # ==========================================================
+    # Booking
+    # ==========================================================
+    [
+        presence_tasks["presence_appmetrica_oz"],
+        presence_tasks["presence_appmetrica_lk"],
+    ] >> start_booking
 
-    (presence_tasks["presence_appmetrica_oz"] >> load_booking)
+    start_booking >> load_booking
 
-    (presence_tasks["presence_appmetrica_lk"] >> load_booking)
+    (
+        load_booking
+        >> identity_tasks["build_identity_booking"]
+        >> presence_tasks["presence_booking"]
+    )
 
-    load_booking >> identity_tasks["build_identity_booking"]
 
-    identity_tasks["build_identity_booking"] >> presence_tasks["presence_booking"]
+    # ==========================================================
+    # Web LK
+    # ==========================================================
+    presence_tasks["presence_booking"] >> start_web_lk
 
-    presence_tasks["presence_booking"] >> load_web_lk
+    start_web_lk >> load_web_lk
 
-    load_web_lk >> identity_tasks["build_identity_web_lk"]
+    (
+        load_web_lk
+        >> identity_tasks["build_identity_web_lk"]
+        >> presence_tasks["presence_web_lk"]
+    )
 
-    identity_tasks["build_identity_web_lk"] >> presence_tasks["presence_web_lk"]
-
+    # ==========================================================
+    # KPI
+    # ==========================================================
     [
         presence_tasks["presence_booking"],
         presence_tasks["presence_web_lk"],
-    ] >> rebuild_mau_ob
+    ] >> start_kpi
 
-    rebuild_mau_ob >> rebuild_mau_lk
-
-    rebuild_mau_lk >> rebuild_total_ob_users_task
+    start_kpi >> rebuild_mau_ob >> rebuild_mau_lk >> rebuild_total_ob_users_task
