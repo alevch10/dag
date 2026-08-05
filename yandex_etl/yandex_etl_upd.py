@@ -327,13 +327,15 @@ def rebuild_total_ob_users(**context):
 
         hook.run(
             """
-            INSERT INTO kpi.total_ob_users
+            INSERT INTO kpi.kpis_summary
             (
                 year,
-                count
+                kpi,
+                value
             )
             SELECT
                 %(year)s,
+                'mau_ob'
                 COUNT(
                     DISTINCT COALESCE(
                         internal_user_id::text,
@@ -345,9 +347,9 @@ def rebuild_total_ob_users(**context):
             WHERE product='oz'
               AND activity_date BETWEEN %(start_date)s
                                    AND %(end_date)s
-            ON CONFLICT (year)
+            ON CONFLICT (year, kpi)
             DO UPDATE SET
-                count = EXCLUDED.count;
+                value = EXCLUDED.value;
             """,
             parameters={
                 "year": year,
@@ -585,10 +587,10 @@ with DAG(
     #        │
     #    Identity
     #        │
-    #┌───────┴────────┐
-    #│                │
-    #Presence OZ   Presence LK
-    #└──────┬─────────┘
+    # ┌───────┴────────┐
+    # │                │
+    # Presence OZ   Presence LK
+    # └──────┬─────────┘
     #        │
     #    ALL_DONE
     #        │
@@ -613,7 +615,7 @@ with DAG(
     #    MAU LK
     #        │
     #   Total OB
-    
+
     # ==========================================================
     # AppMetrica
     # ==========================================================
@@ -639,7 +641,6 @@ with DAG(
         >> identity_tasks["build_identity_booking"]
         >> presence_tasks["presence_booking"]
     )
-
 
     # ==========================================================
     # Web LK

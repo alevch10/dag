@@ -244,6 +244,14 @@ DO UPDATE SET
     count = EXCLUDED.count
 """
 
+UPDATE_KPIS_SUMMARY = """
+INSERT INTO kpi.kpis_summary (year, kpi, value)
+VALUES (%s, %s, %s)
+ON CONFLICT (year, kpi)
+DO UPDATE SET
+    value = EXCLUDED.value
+"""
+
 
 def add_month(date: date) -> date:
     if date.month == 12:
@@ -458,6 +466,101 @@ def process_ob_appointments(max_date):
     logging.info("All online appointments months up to current have been processed.")
 
 
+def get_max_month_ratio() -> date:
+    """Возвращает последний месяц, для которого есть данные в kpi.ob_to_call_centre_kpi."""
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+    sql = "SELECT month FROM kpi.ob_to_call_centre_kpi ORDER BY month DESC LIMIT 1"
+    result = hook.get_first(sql)
+    logging.info(f"Last month in ob_to_call_centre_kpi: {result}")
+    return result[0] if result else None
+
+
+def calculate_revenue_yoy_diff():
+    """
+    Рассчитывает разницу выручки текущего года и прошлого за период с января по последний доступный месяц.
+    Результат сохраняется в kpi.kpis_summary с годом как число.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+
+    max_month = get_max_date_of_revenue_kpi()
+    if max_month is None:
+        logging.warning("No data in kpi.revenue_kpi, skipping revenue YoY diff.")
+        return
+
+    current_year = max_month.year
+    current_month = max_month.month
+
+    # Периоды: с января по последний месяц
+    start_current = date(current_year, 1, 1)
+    end_current = max_month
+    start_previous = date(current_year - 1, 1, 1)
+    end_previous = date(
+        current_year - 1, current_month, 1
+    )  # день не важен, важен месяц
+
+    sql_sum = """
+        SELECT COALESCE(SUM(revenue), 0)
+        FROM kpi.revenue_kpi
+        WHERE month >= %s AND month <= %s
+    """
+
+    current_sum = hook.get_first(sql_sum, parameters=(start_current, end_current))[0]
+    previous_sum = hook.get_first(sql_sum, parameters=(start_previous, end_previous))[0]
+
+    diff = current_sum - previous_sum
+    logging.info(
+        f"Revenue YoY diff: {diff} (current={current_sum}, previous={previous_sum})"
+    )
+
+    # Сохраняем в kpis_summary (year – число, например 2026)
+    hook.run(UPDATE_KPIS_SUMMARY, parameters=(current_year, "revenue", diff))
+    logging.info(
+        f"Updated kpi.kpis_summary for year={current_year}, kpi='revenue' with value={diff}"
+    )
+
+
+def calculate_ratio_yoy_diff():
+    """
+    Рассчитывает разницу средних значений ratio_online_to_total за период с января по последний доступный месяц
+    между текущим и прошлым годом. Результат сохраняется в kpi.kpis_summary.
+    """
+    hook = PostgresHook(postgres_conn_id="dwh_pg")
+
+    max_month = get_max_month_ratio()
+    if max_month is None:
+        logging.warning(
+            "No data in kpi.ob_to_call_centre_kpi, skipping ratio YoY diff."
+        )
+        return
+
+    current_year = max_month.year
+    current_month = max_month.month
+
+    start_current = date(current_year, 1, 1)
+    end_current = max_month
+    start_previous = date(current_year - 1, 1, 1)
+    end_previous = date(current_year - 1, current_month, 1)
+
+    sql_avg = """
+        SELECT COALESCE(AVG(ratio_online_to_total), 0)
+        FROM kpi.ob_to_call_centre_kpi
+        WHERE month >= %s AND month <= %s
+    """
+
+    current_avg = hook.get_first(sql_avg, parameters=(start_current, end_current))[0]
+    previous_avg = hook.get_first(sql_avg, parameters=(start_previous, end_previous))[0]
+
+    diff = current_avg - previous_avg
+    logging.info(
+        f"Ratio YoY diff: {diff} (current_avg={current_avg}, previous_avg={previous_avg})"
+    )
+
+    hook.run(UPDATE_KPIS_SUMMARY, parameters=(current_year, "ratio", diff))
+    logging.info(
+        f"Updated kpi.kpis_summary for year={current_year}, kpi='ratio' with value={diff}"
+    )
+
+
 default_args = {
     "owner": "levchenko-an",
     "retries": 2,
@@ -500,6 +603,15 @@ with DAG(
         op_args=[get_ob_last_month.output],
     )
 
+    calculate_revenue_diff_task = PythonOperator(
+        task_id="calculate_revenue_yoy_diff",
+        python_callable=calculate_revenue_yoy_diff,
+    )
+    calculate_ratio_diff_task = PythonOperator(
+        task_id="calculate_ratio_yoy_diff",
+        python_callable=calculate_ratio_yoy_diff,
+    )
+
     (
         get_last_month
         >> get_revenue
@@ -507,4 +619,6 @@ with DAG(
         >> process_call_center_amount
         >> get_ob_last_month
         >> process_ob_appointments_
+        >> calculate_revenue_diff_task
+        >> calculate_ratio_diff_task
     )
