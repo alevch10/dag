@@ -335,7 +335,7 @@ def rebuild_total_ob_users(**context):
             )
             SELECT
                 %(year)s,
-                'mau_ob'
+                'mau_ob',
                 COUNT(
                     DISTINCT COALESCE(
                         internal_user_id::text,
