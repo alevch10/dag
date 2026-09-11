@@ -570,7 +570,7 @@ default_args = {
 with DAG(
     dag_id="patientnet_etl",
     start_date=datetime(2026, 7, 27),
-    schedule="0 1 * * *",
+    schedule="0 2 * * *",
     catchup=False,
     default_args=default_args,
     tags=["kpi", "patientnet", "revenue"],
