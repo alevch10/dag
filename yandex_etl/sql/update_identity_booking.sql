@@ -28,6 +28,10 @@ SET
     EXCLUDED.internal_user_id,
     kpi.user_identity.internal_user_id
   ),
+  first_seen_at = LEAST(
+    kpi.user_identity.first_seen_at,
+    EXCLUDED.first_seen_at
+  ),
   last_seen_at = GREATEST(
     kpi.user_identity.last_seen_at,
     EXCLUDED.last_seen_at
