@@ -353,7 +353,11 @@ SELECT
     source,
     product,
     platform,
-    COALESCE(MAX(CASE WHEN month = %(month)s::date THEN cnt END), 0) AS current_cnt,
+    COALESCE(MAX(CASE WHEN month = %(month)s::date THEN cnt END), 0)
+        AS current_cnt,
+    COALESCE(MAX(CASE WHEN month = (%(month)s::date - INTERVAL '1 month')::date
+                      THEN cnt END), 0)
+        AS prev_cnt,
     COALESCE(percentile_cont(0.5) WITHIN GROUP (
         ORDER BY CASE WHEN month < %(month)s::date THEN cnt END
     ), 0) AS median_prev
@@ -529,25 +533,39 @@ def check_source_gaps(table_name, date_field, source_name, **context):
 
 
 def check_presence_volume(**context):
-    """Помесячный объём user_presence по каждой связке источник/продукт/платформа."""
+    """
+    Помесячный объём user_presence по каждой связке источник/продукт/платформа.
+
+    Источники, выведенные из эксплуатации, пропускаются: если в проверяемом
+    месяце ноль И в предыдущем ноль — значит источник больше не пишет,
+    а не сломался. Так ведёт себя Amplitude, переставший писать 01.02.2026.
+    Сломанная загрузка выглядит иначе: падение с ненулевого значения.
+    """
     month = last_complete_month()
     hook = PostgresHook(postgres_conn_id="dwh_pg")
     rows = hook.get_records(CHECK_PRESENCE_VOLUME_SQL, parameters={"month": month})
 
     problems = []
-    for source, product, platform, current_cnt, median_prev in rows:
+    for source, product, platform, current_cnt, prev_cnt, median_prev in rows:
         median_prev = float(median_prev or 0)
+        label = f"{source}/{product}/{platform}"
+
+        if current_cnt == 0 and prev_cnt == 0:
+            logging.info(f"{label}: источник не активен, проверка пропущена")
+            continue
+
         logging.info(
-            f"{source}/{product}/{platform} за {month}: {current_cnt}, "
-            f"медиана {median_prev:.0f}"
+            f"{label} за {month}: {current_cnt}, медиана {median_prev:.0f}"
         )
+
         if median_prev <= 0:
             continue
+
         drop = 1 - (current_cnt / median_prev)
         if drop > VOLUME_DROP_THRESHOLD:
             problems.append(
-                f"{source}/{product}/{platform}: {current_cnt} "
-                f"против медианы {median_prev:.0f} (падение {drop:.0%})"
+                f"{label}: {current_cnt} против медианы {median_prev:.0f} "
+                f"(падение {drop:.0%})"
             )
 
     if problems:
